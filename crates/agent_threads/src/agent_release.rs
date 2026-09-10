@@ -84,14 +84,14 @@ pub struct AgentSelfUpdatePolicy {
 macro_rules! claude_release {
     ($os:expr, $arch:expr, $libc:expr, $platform:literal, $name:literal, $digest:literal) => {
         AgentRelease {
-            version: "2.1.205",
+            version: "2.1.267",
             target: RemotePlatform {
                 os: $os,
                 arch: $arch,
                 libc: $libc,
             },
             source_url: concat!(
-                "https://downloads.claude.ai/claude-code-releases/2.1.205/",
+                "https://downloads.claude.ai/claude-code-releases/2.1.267/",
                 $platform,
                 "/",
                 $name
@@ -101,7 +101,7 @@ macro_rules! claude_release {
             executable_sha256: $digest,
             artifact: AgentArtifactFormat::Raw,
             executable_name: $name,
-            version_matcher: AgentVersionMatcher::Claude { version: "2.1.205" },
+            version_matcher: AgentVersionMatcher::Claude { version: "2.1.267" },
             self_update_environment: &[("DISABLE_UPDATES", "1")],
         }
     };
@@ -114,7 +114,7 @@ pub const CLAUDE_RELEASES: &[AgentRelease] = &[
         None,
         "darwin-arm64",
         "claude",
-        "33e28624c5ae84f2bd7d2d8761e5d2e77997ba965cb11b6448de6b6e2c566f9c"
+        "a681f3008f0050029aeebcab3af51bb6a55ddeb625a3af3141a4416d43cd2558"
     ),
     claude_release!(
         remote::RemoteOs::MacOs,
@@ -122,7 +122,7 @@ pub const CLAUDE_RELEASES: &[AgentRelease] = &[
         None,
         "darwin-x64",
         "claude",
-        "4299a3f48551ef365f2d056f24d87e84b822c4c10b6acc46979446b7b5c60ceb"
+        "071988cb2e5a4378d8543d78e0ff5f8ed1ecc5e113271774a0582ee74fb0ef79"
     ),
     claude_release!(
         remote::RemoteOs::Linux,
@@ -130,7 +130,7 @@ pub const CLAUDE_RELEASES: &[AgentRelease] = &[
         Some(remote::RemoteLibc::Glibc),
         "linux-arm64",
         "claude",
-        "c1874c85bcd3a88b70439fd50ff5910b7e6ac5371c14dd49d4ccc2878a592d09"
+        "226a4e009574044a18bf5495f127806b2a1bfcbf25b3c01608705fafee95fefb"
     ),
     claude_release!(
         remote::RemoteOs::Linux,
@@ -138,7 +138,7 @@ pub const CLAUDE_RELEASES: &[AgentRelease] = &[
         Some(remote::RemoteLibc::Glibc),
         "linux-x64",
         "claude",
-        "dd8734c0b6a503fe1d17425184e57b397c30bb0337a33f1470d9985febfe5b09"
+        "0399c793ff571d5946ef923d80b4f330d05ac4b6842a6b0775468f5d389403c0"
     ),
     claude_release!(
         remote::RemoteOs::Linux,
@@ -146,7 +146,7 @@ pub const CLAUDE_RELEASES: &[AgentRelease] = &[
         Some(remote::RemoteLibc::Musl),
         "linux-arm64-musl",
         "claude",
-        "a8cd2a626d7d0b5fb3516164a4cf3b4acbbadb053a5b1b2a2462ccbd2ebf6bde"
+        "2aa337b3610742cdc9ed5dc5123d0ac41094849235182a5e6f2b7956da7ccaa5"
     ),
     claude_release!(
         remote::RemoteOs::Linux,
@@ -154,7 +154,7 @@ pub const CLAUDE_RELEASES: &[AgentRelease] = &[
         Some(remote::RemoteLibc::Musl),
         "linux-x64-musl",
         "claude",
-        "20018df16e75f4287c3bfb088e04019452cf262f66ee43041e285113c4e479d8"
+        "3c336039170511e6592be624097e95eb9e85be0ecf96f78b331907497512c401"
     ),
     claude_release!(
         remote::RemoteOs::Windows,
@@ -162,7 +162,7 @@ pub const CLAUDE_RELEASES: &[AgentRelease] = &[
         None,
         "win32-x64",
         "claude.exe",
-        "f09120889098672074e7c5166d5474da0c5482f2bec898b3510cacd9c1fefa42"
+        "23dde2a47cf1d7d9c4a2d96d21fa80ea9bfc872dfde0ee06e9982d2908603350"
     ),
     claude_release!(
         remote::RemoteOs::Windows,
@@ -170,21 +170,21 @@ pub const CLAUDE_RELEASES: &[AgentRelease] = &[
         None,
         "win32-arm64",
         "claude.exe",
-        "9a86e5acbc584ab7c1b684f1cc1bf5c7bddd6afd4817c0d2c2113d15bfbff0a9"
+        "0dc306259e3036af4255f66b77451d3f7297bcd376bfae20f7b42e2fa1473607"
     ),
 ];
 
 macro_rules! codex_archive_release {
     ($os:expr, $arch:expr, $libc:expr, $target:literal, $source_digest:literal, $executable_digest:literal) => {
         AgentRelease {
-            version: "0.144.6",
+            version: "0.154.0",
             target: RemotePlatform {
                 os: $os,
                 arch: $arch,
                 libc: $libc,
             },
             source_url: concat!(
-                "https://github.com/openai/codex/releases/download/rust-v0.144.6/codex-",
+                "https://github.com/openai/codex/releases/download/rust-v0.154.0/codex-",
                 $target,
                 ".tar.gz"
             ),
@@ -195,7 +195,7 @@ macro_rules! codex_archive_release {
                 executable_path: concat!("codex-", $target),
             },
             executable_name: "codex",
-            version_matcher: AgentVersionMatcher::Codex { version: "0.144.6" },
+            version_matcher: AgentVersionMatcher::Codex { version: "0.154.0" },
             self_update_environment: &[],
         }
     };
@@ -204,14 +204,14 @@ macro_rules! codex_archive_release {
 macro_rules! codex_windows_release {
     ($arch:expr, $target:literal, $digest:literal) => {
         AgentRelease {
-            version: "0.144.6",
+            version: "0.154.0",
             target: RemotePlatform {
                 os: remote::RemoteOs::Windows,
                 arch: $arch,
                 libc: None,
             },
             source_url: concat!(
-                "https://github.com/openai/codex/releases/download/rust-v0.144.6/codex-",
+                "https://github.com/openai/codex/releases/download/rust-v0.154.0/codex-",
                 $target,
                 ".exe"
             ),
@@ -220,7 +220,7 @@ macro_rules! codex_windows_release {
             executable_sha256: $digest,
             artifact: AgentArtifactFormat::Raw,
             executable_name: "codex.exe",
-            version_matcher: AgentVersionMatcher::Codex { version: "0.144.6" },
+            version_matcher: AgentVersionMatcher::Codex { version: "0.154.0" },
             self_update_environment: &[],
         }
     };
@@ -232,58 +232,58 @@ pub const CODEX_RELEASES: &[AgentRelease] = &[
         remote::RemoteArch::Aarch64,
         None,
         "aarch64-apple-darwin",
-        "023590f828bc9507ac61132ee35e74d3c5d33fb5ba3e1ca4fc2e013a2f71a3d7",
-        "80a3933d11a9d13ef806aa24f7bb8afc9169cfe4e9b09d6da6a92922cbde9cff"
+        "344310a0a591c1b192e04feff304321a69907c9498baaac331ca7e16ebcef9d7",
+        "4f85982624b3898c8991cb80c0981b2aa71070e3537046c9a95950318a95afcc"
     ),
     codex_archive_release!(
         remote::RemoteOs::MacOs,
         remote::RemoteArch::X86_64,
         None,
         "x86_64-apple-darwin",
-        "763c81a56ba24a4f6c2fd256ed7ee1775caeccd22537d28887de8f6864ac5947",
-        "bd6ec7e28b4682e010f6bf3953166d2a2b178d50beb448c137d33d53450b2802"
+        "1219c837d8f813b493a424c125c0038b5d9ca16279bc6d3fe6ce037a3e18a6e7",
+        "b0e26f09819c4b27f621853800c29f95ac5d526ad9b88ab641de4db86835718d"
     ),
     codex_archive_release!(
         remote::RemoteOs::Linux,
         remote::RemoteArch::Aarch64,
         Some(remote::RemoteLibc::Glibc),
         "aarch64-unknown-linux-musl",
-        "8eddae5e6c009dff9ba51ae1bfe3bdd9ff4c1ccc93a48cc6860db1cd9fdf11be",
-        "57a159f67999794494a172e71c12c6b5a211542ea90c66ea2ce9e6ac1edec6b1"
+        "583b48df32804213bdcd338c2e5adb06b34340821fa757a726cc0a524fa33c27",
+        "9b7c1c7abdc26fc3c4f47c77656a8e9121def5483dbae830ef1ee561758448a9"
     ),
     codex_archive_release!(
         remote::RemoteOs::Linux,
         remote::RemoteArch::Aarch64,
         Some(remote::RemoteLibc::Musl),
         "aarch64-unknown-linux-musl",
-        "8eddae5e6c009dff9ba51ae1bfe3bdd9ff4c1ccc93a48cc6860db1cd9fdf11be",
-        "57a159f67999794494a172e71c12c6b5a211542ea90c66ea2ce9e6ac1edec6b1"
+        "583b48df32804213bdcd338c2e5adb06b34340821fa757a726cc0a524fa33c27",
+        "9b7c1c7abdc26fc3c4f47c77656a8e9121def5483dbae830ef1ee561758448a9"
     ),
     codex_archive_release!(
         remote::RemoteOs::Linux,
         remote::RemoteArch::X86_64,
         Some(remote::RemoteLibc::Glibc),
         "x86_64-unknown-linux-musl",
-        "6a9def51a0ad8cea6684d8eb3bf033c89f33e3bc5cfe492f1a1e0a718451a1c6",
-        "a31ae9450a26216eb1e7c53102fd42123dd675974310b0e2ca3aa4cb622a2c15"
+        "d7e18b2597ae8f242f5f31ee9e90deef48dbc9edd634d9868fb6435d08c07f02",
+        "3188814c35471432d4123203e0eb38e5bddc60226e3d7ddf0e59e649ea140022"
     ),
     codex_archive_release!(
         remote::RemoteOs::Linux,
         remote::RemoteArch::X86_64,
         Some(remote::RemoteLibc::Musl),
         "x86_64-unknown-linux-musl",
-        "6a9def51a0ad8cea6684d8eb3bf033c89f33e3bc5cfe492f1a1e0a718451a1c6",
-        "a31ae9450a26216eb1e7c53102fd42123dd675974310b0e2ca3aa4cb622a2c15"
+        "d7e18b2597ae8f242f5f31ee9e90deef48dbc9edd634d9868fb6435d08c07f02",
+        "3188814c35471432d4123203e0eb38e5bddc60226e3d7ddf0e59e649ea140022"
     ),
     codex_windows_release!(
         remote::RemoteArch::X86_64,
         "x86_64-pc-windows-msvc",
-        "4b76ded066d0239115ca97473d010c92072bc5c5550a45dd7cbebe1e9eb956a7"
+        "be96b992178b1e467c225800da0d65f2c86d5eba1ef0b14632f65db381cbdfde"
     ),
     codex_windows_release!(
         remote::RemoteArch::Aarch64,
         "aarch64-pc-windows-msvc",
-        "2a23cdd00332064c27d4aa453d33d7a66a060be89fff33b8a388ba4db7e4c620"
+        "dc6d744d747a50f8caf7f08817e0ccc9b09781f6269dec3609e2f9fbe036233d"
     ),
 ];
 
