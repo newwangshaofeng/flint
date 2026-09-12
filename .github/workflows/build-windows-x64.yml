@@ -122,14 +122,28 @@ jobs:
           New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null
 
           # 1. Installer executable
-          $installerSrc = "target\Flint-x86_64.exe"
-          $installerDst = Join-Path $artifactDir "Flint-x86_64-installer.exe"
-          Copy-Item -Path $installerSrc -Destination $installerDst -Force
-          Write-Host "Prepared Installer: $installerDst"
+          $installerCandidates = @(
+              (Join-Path $env:GITHUB_WORKSPACE "target\Flint-x86_64.exe"),
+              (Join-Path $env:GITHUB_WORKSPACE "target\x86_64-pc-windows-msvc\Flint-x86_64.exe"),
+              (Get-ChildItem -Path (Join-Path $env:GITHUB_WORKSPACE "target") -Filter "Flint*x86_64*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName)
+          )
+          $installerSrc = $installerCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if ($installerSrc) {
+              $installerDst = Join-Path $artifactDir "Flint-x86_64-installer.exe"
+              Copy-Item -Path $installerSrc -Destination $installerDst -Force
+              Write-Host "Prepared Installer: $installerDst"
+          } else {
+              Write-Warning "Installer executable not found in target directories."
+          }
 
           # 2. Standalone raw executable
-          $rawExeSrc = "target\x86_64-pc-windows-msvc\release\flint.exe"
-          if (Test-Path $rawExeSrc) {
+          $rawExeCandidates = @(
+              (Join-Path $env:GITHUB_WORKSPACE "target\x86_64-pc-windows-msvc\release\flint.exe"),
+              (Join-Path $env:GITHUB_WORKSPACE "target\release\flint.exe"),
+              (Join-Path $env:GITHUB_WORKSPACE "target\x86_64-pc-windows-msvc\inno\Flint.exe")
+          )
+          $rawExeSrc = $rawExeCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if ($rawExeSrc) {
               $rawExeDst = Join-Path $artifactDir "flint.exe"
               Copy-Item -Path $rawExeSrc -Destination $rawExeDst -Force
               Write-Host "Prepared Standalone flint.exe: $rawExeDst"
@@ -139,16 +153,18 @@ jobs:
           $portableDir = Join-Path $env:RUNNER_TEMP "flint-portable"
           New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
 
-          $innoDir = "target\x86_64-pc-windows-msvc\inno"
-          if (Test-Path $innoDir) {
+          $innoDirCandidates = @(
+              (Join-Path $env:GITHUB_WORKSPACE "target\x86_64-pc-windows-msvc\inno"),
+              (Join-Path $env:GITHUB_WORKSPACE "target\inno")
+          )
+          $innoDir = $innoDirCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($innoDir) {
               Copy-Item -Path "$innoDir\*" -Destination $portableDir -Recurse -Force
           } else {
-              Copy-Item -Path "target\x86_64-pc-windows-msvc\release\flint.exe" -Destination "$portableDir\Flint.exe" -Force
-              if (Test-Path "target\x86_64-pc-windows-msvc\release\cli.exe") {
-                  Copy-Item -Path "target\x86_64-pc-windows-msvc\release\cli.exe" -Destination "$portableDir\cli.exe" -Force
-              }
-              if (Test-Path "target\x86_64-pc-windows-msvc\release\flintctl.exe") {
-                  Copy-Item -Path "target\x86_64-pc-windows-msvc\release\flintctl.exe" -Destination "$portableDir\flintctl.exe" -Force
+              $flintExe = (Join-Path $env:GITHUB_WORKSPACE "target\x86_64-pc-windows-msvc\release\flint.exe")
+              if (-not (Test-Path $flintExe)) { $flintExe = (Join-Path $env:GITHUB_WORKSPACE "target\release\flint.exe") }
+              if (Test-Path $flintExe) {
+                  Copy-Item -Path $flintExe -Destination "$portableDir\Flint.exe" -Force
               }
           }
 
@@ -157,8 +173,12 @@ jobs:
           Write-Host "Prepared Portable ZIP: $portableZip"
 
           # 4. Optional remote server zip
-          $remoteServerSrc = "target\flint-remote-server-windows-x86_64.zip"
-          if (Test-Path $remoteServerSrc) {
+          $remoteServerCandidates = @(
+              (Join-Path $env:GITHUB_WORKSPACE "target\flint-remote-server-windows-x86_64.zip"),
+              (Join-Path $env:GITHUB_WORKSPACE "target\x86_64-pc-windows-msvc\flint-remote-server-windows-x86_64.zip")
+          )
+          $remoteServerSrc = $remoteServerCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if ($remoteServerSrc) {
               Copy-Item -Path $remoteServerSrc -Destination $artifactDir -Force
               Write-Host "Prepared Remote Server: $remoteServerSrc"
           }
@@ -172,7 +192,7 @@ jobs:
           $checksums | Set-Content -Path "SHA256SUMS.txt" -Encoding utf8
           Pop-Location
 
-          Write-Host "Generated artifacts in $($artifactDir):"
+          Write-Host "Generated artifacts in directory: $artifactDir"
           Get-ChildItem $artifactDir | Select-Object Name, Length
 
       - name: Create or Update GitHub Release
