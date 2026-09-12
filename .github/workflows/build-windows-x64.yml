@@ -172,7 +172,7 @@ jobs:
           $checksums | Set-Content -Path "SHA256SUMS.txt" -Encoding utf8
           Pop-Location
 
-          Write-Host "Generated artifacts in $artifactDir:"
+          Write-Host "Generated artifacts in $($artifactDir):"
           Get-ChildItem $artifactDir | Select-Object Name, Length
 
       - name: Create or Update GitHub Release
@@ -221,13 +221,13 @@ jobs:
           }
 
           if ($exists) {
-              Write-Host "Release $env:TAG already exists. Uploading/clobbering assets..."
-              gh release upload "$env:TAG" @files --clobber
+              Write-Host "Release $($env:TAG) already exists. Uploading/clobbering assets..."
+              & gh release upload "$($env:TAG)" $files --clobber
           } else {
-              Write-Host "Creating new release $env:TAG..."
+              Write-Host "Creating new release $($env:TAG)..."
               $createArgs = @(
-                  "release", "create", "$env:TAG",
-                  "--title", "$env:TITLE",
+                  "release", "create", "$($env:TAG)",
+                  "--title", "$($env:TITLE)",
                   "--notes-file", "$notesFile"
               )
 
@@ -239,7 +239,7 @@ jobs:
               }
 
               $createArgs += $files
-              gh @createArgs
+              & gh @createArgs
           }
 
-          Write-Host "Release created/updated successfully at $env:TAG!"
+          Write-Host "Release created/updated successfully at $($env:TAG)!"
