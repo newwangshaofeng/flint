@@ -5090,7 +5090,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_threads_panel_section() -> [SettingsPageItem; 17] {
+    fn agent_threads_panel_section() -> [SettingsPageItem; 19] {
         [
             SettingsPageItem::SectionHeader("Agent Threads Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5263,6 +5263,35 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Droid Initialization Command",
+                description: "Shell command to run before Droid starts. Droid starts only when the command succeeds.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_threads.droid.initialization_command"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .droid
+                            .as_ref()?
+                            .initialization_command
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .droid
+                            .get_or_insert_default()
+                            .initialization_command = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("source ~/.profile"),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Codex Initialization Command",
                 description: "Shell command to run before Codex starts. Codex starts only when the command succeeds.",
                 field: Box::new(SettingField {
@@ -5376,6 +5405,32 @@ fn panels_page() -> SettingsPage {
                     placeholder: Some("source ~/.profile"),
                     ..Default::default()
                 })),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hide Droid",
+                description: "Hide the Droid section from the Agent Threads panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent_threads.droid.hidden"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent_threads
+                            .as_ref()?
+                            .droid
+                            .as_ref()?
+                            .hidden
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent_threads
+                            .get_or_insert_default()
+                            .droid
+                            .get_or_insert_default()
+                            .hidden = value;
+                    },
+                }),
+                metadata: None,
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
@@ -9805,6 +9860,7 @@ mod tests {
             "Diagnostic Badges",
             "Diff Stats",
             "Drag and Drop",
+            "Droid Initialization Command",
             "Entry Spacing",
             "Fallback Branch Name",
             "Folder Icons",
@@ -9820,6 +9876,7 @@ mod tests {
             "Hide .gitignore",
             "Hide Claude",
             "Hide Codex",
+            "Hide Droid",
             "Hide Hidden",
             "Hide OpenCode",
             "Hide Pi",
@@ -9857,6 +9914,7 @@ mod tests {
             "Globs to match files that will be considered \"hidden\" and can be hidden from the project panel.",
             "Hide the Claude section from the Agent Threads panel.",
             "Hide the Codex section from the Agent Threads panel.",
+            "Hide the Droid section from the Agent Threads panel.",
             "Hide the OpenCode section from the Agent Threads panel.",
             "Hide the Pi section from the Agent Threads panel.",
             "How and when the scrollbar should be displayed.",
@@ -9867,6 +9925,7 @@ mod tests {
             "Maximum length of the commit message title before a warning is shown. Set to 0 to disable.",
             "Shell command to run before Claude starts. Claude starts only when the command succeeds.",
             "Shell command to run before Codex starts. Codex starts only when the command succeeds.",
+            "Shell command to run before Droid starts. Droid starts only when the command succeeds.",
             "Shell command to run before OpenCode starts. OpenCode starts only when the command succeeds.",
             "Shell command to run before Pi starts. Pi starts only when the command succeeds.",
             "Show a badge on the terminal panel icon with the count of open terminals.",
@@ -10451,6 +10510,10 @@ mod tests {
                 "agent_threads.starts_open",
             ),
             (
+                "Droid Initialization Command",
+                "agent_threads.droid.initialization_command",
+            ),
+            (
                 "Codex Initialization Command",
                 "agent_threads.codex.initialization_command",
             ),
@@ -10466,6 +10529,7 @@ mod tests {
                 "OpenCode Initialization Command",
                 "agent_threads.opencode.initialization_command",
             ),
+            ("Hide Droid", "agent_threads.droid.hidden"),
             ("Hide Codex", "agent_threads.codex.hidden"),
             ("Hide Claude", "agent_threads.claude.hidden"),
             ("Hide Pi", "agent_threads.pi.hidden"),

@@ -201,8 +201,13 @@ function MakeAppx {
         }
     }
     Copy-Item -Path "$manifestFile" -Destination "$innoDir\make_appx\AppxManifest.xml"
-    # Add makeAppx.exe to Path
-    $sdk = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64"
+    # Locate makeAppx.exe from installed Windows SDK versions
+    $makeAppxInstalled = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\makeappx.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+    if ($makeAppxInstalled) {
+        $sdk = Split-Path $makeAppxInstalled.FullName -Parent
+    } else {
+        $sdk = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64"
+    }
     $env:Path += ';' + $sdk
     makeAppx.exe pack /d "$innoDir\make_appx" /p "$innoDir\flint_explorer_command_injector.appx" /nv
 }

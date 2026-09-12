@@ -12,6 +12,7 @@
 
 mod claude;
 mod codex;
+mod droid;
 mod opencode;
 mod pi;
 mod transcript;
@@ -34,6 +35,7 @@ use util::paths::PathStyle;
 
 pub use claude::ClaudeHistoryProvider;
 pub use codex::CodexHistoryProvider;
+pub use droid::DroidHistoryProvider;
 pub use opencode::OpenCodeHistoryProvider;
 pub use pi::PiHistoryProvider;
 pub use transcript::{DEFAULT_BUDGET, ExcerptBudget, ExtractionRefusal, TranscriptExcerpt};
@@ -53,6 +55,7 @@ pub enum HistoryKind {
     Claude,
     Pi,
     OpenCode,
+    Droid,
 }
 
 impl HistoryKind {
@@ -62,6 +65,7 @@ impl HistoryKind {
             HistoryKind::Claude => "claude",
             HistoryKind::Pi => "pi",
             HistoryKind::OpenCode => "opencode",
+            HistoryKind::Droid => "droid",
         }
     }
 
@@ -71,6 +75,7 @@ impl HistoryKind {
             "claude" => Some(HistoryKind::Claude),
             "pi" => Some(HistoryKind::Pi),
             "opencode" => Some(HistoryKind::OpenCode),
+            "droid" => Some(HistoryKind::Droid),
             _ => None,
         }
     }
@@ -81,6 +86,7 @@ impl HistoryKind {
             HistoryKind::Claude => Arc::new(ClaudeHistoryProvider),
             HistoryKind::Pi => Arc::new(PiHistoryProvider),
             HistoryKind::OpenCode => Arc::new(OpenCodeHistoryProvider),
+            HistoryKind::Droid => Arc::new(DroidHistoryProvider),
         }
     }
 
@@ -91,6 +97,7 @@ impl HistoryKind {
             HistoryKind::Codex => codex::classify_transcript(content),
             HistoryKind::Claude => claude::classify_transcript(content),
             HistoryKind::Pi => pi::classify_transcript(content),
+            HistoryKind::Droid => droid::classify_transcript(content),
             HistoryKind::OpenCode => {
                 return Err(anyhow!(
                     "OpenCode transcripts must be extracted from its history database"
@@ -101,12 +108,15 @@ impl HistoryKind {
 
     /// Whether the projection collapses multiple index rows that share a
     /// session id to the newest one. Codex shows one entry per rollout file
-    /// (matching the legacy scanner), so it does not dedup; Claude and Pi keep
-    /// the newest record per session.
+    /// (matching the legacy scanner), so it does not dedup; Claude, Pi, and
+    /// Droid keep the newest record per session.
     fn dedup_by_session(self) -> bool {
         match self {
             HistoryKind::Codex => false,
-            HistoryKind::Claude | HistoryKind::Pi | HistoryKind::OpenCode => true,
+            HistoryKind::Claude
+            | HistoryKind::Pi
+            | HistoryKind::OpenCode
+            | HistoryKind::Droid => true,
         }
     }
 }
@@ -849,6 +859,14 @@ mod tests {
             Some(HistoryKind::OpenCode)
         );
         assert_eq!(HistoryKind::OpenCode.id(), "opencode");
+    }
+
+    #[test]
+    fn history_kind_ids_include_droid() {
+        assert_eq!(HistoryKind::from_id("droid"), Some(HistoryKind::Droid));
+        assert_eq!(HistoryKind::Droid.id(), "droid");
+        assert!(HistoryKind::Droid.dedup_by_session());
+        assert!(HistoryKind::from_id("not-an-agent").is_none());
     }
 
     #[gpui::test]

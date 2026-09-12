@@ -71,6 +71,7 @@ menu-outline-panel = 大纲面板
 menu-terminal = 终端
 menu-extensions = 扩展
 menu-agent-threads = 代理线程
+menu-new-droid-thread = 新建 Droid 线程
 menu-new-codex-thread = 新建 Codex 线程
 menu-new-claude-thread = 新建 Claude 线程
 menu-new-pi-thread = 新建 Pi 线程

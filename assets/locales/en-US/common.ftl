@@ -75,6 +75,7 @@ menu-outline-panel = Outline Panel
 menu-terminal = Terminal
 menu-extensions = Extensions
 menu-agent-threads = Agent Threads
+menu-new-droid-thread = New Droid Thread
 menu-new-codex-thread = New Codex Thread
 menu-new-claude-thread = New Claude Thread
 menu-new-pi-thread = New Pi Thread

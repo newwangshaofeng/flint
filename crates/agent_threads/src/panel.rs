@@ -3129,20 +3129,26 @@ mod tests {
 
         assert_eq!(
             visible_ids(&panel, cx),
-            vec!["codex", "claude", "pi", "opencode"]
+            vec!["droid", "codex", "claude", "pi", "opencode"]
         );
 
         set_agent_hidden(cx, "codex", true);
-        assert_eq!(visible_ids(&panel, cx), vec!["claude", "pi", "opencode"]);
+        assert_eq!(
+            visible_ids(&panel, cx),
+            vec!["droid", "claude", "pi", "opencode"]
+        );
 
         set_agent_hidden(cx, "codex", false);
         assert_eq!(
             visible_ids(&panel, cx),
-            vec!["codex", "claude", "pi", "opencode"]
+            vec!["droid", "codex", "claude", "pi", "opencode"]
         );
 
         set_agent_hidden(cx, "opencode", true);
-        assert_eq!(visible_ids(&panel, cx), vec!["codex", "claude", "pi"]);
+        assert_eq!(
+            visible_ids(&panel, cx),
+            vec!["droid", "codex", "claude", "pi"]
+        );
     }
 
     #[gpui::test]
@@ -3630,7 +3636,7 @@ mod tests {
                 .collect::<Vec<_>>()
         });
 
-        assert_eq!(target_ids, vec!["codex", "opencode"]);
+        assert_eq!(target_ids, vec!["droid", "codex", "opencode"]);
     }
 
     #[gpui::test]

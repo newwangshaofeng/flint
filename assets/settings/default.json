@@ -1495,8 +1495,15 @@
     "active_encoding_button": "non_utf8",
   },
   // Agent thread panel: launch commands and per-section display limits for
-  // Codex, Claude, Pi, and OpenCode terminal threads.
+  // Droid, Codex, Claude, Pi, and OpenCode terminal threads.
   "agent_threads": {
+    "droid": {
+      "command": "droid",
+      "args": [],
+      "env": {},
+      "initialization_command": "",
+      "hidden": false,
+    },
     "codex": {
       "command": "codex",
       "args": [],

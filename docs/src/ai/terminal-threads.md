@@ -137,6 +137,12 @@ To configure this from within Codex, run `/title` and use the picker to choose w
 terminal_title = ["spinner", "project-name", "run-state", "thread-title"]
 ```
 
+### Droid {#droid}
+
+Flint supports Droid (Factory CLI) as a terminal-backed agent thread. Flint automatically discovers your previous Droid sessions stored in `~/.factory/sessions/` and organizes them in the Agent Threads sidebar.
+
+Selecting a past session resumes it using `droid --resume <session_id>`, preserving its context and history. Flint also detects Droid's interactive command approvals and directory trust prompts to keep the sidebar status dot updated.
+
 ## Credentials and Remote Projects {#credentials-and-remote-projects}
 
 Credentials come from the terminal session and the CLI/TUI running inside it.

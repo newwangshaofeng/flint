@@ -140,6 +140,7 @@ fn generic_terminal_is_blocked(screen_tail: &str) -> bool {
 const BUNDLED_MANIFESTS: &[(&str, &str)] = &[
     ("claude", include_str!("attention_manifests/claude.toml")),
     ("codex", include_str!("attention_manifests/codex.toml")),
+    ("droid", include_str!("attention_manifests/droid.toml")),
     (
         "opencode",
         include_str!("attention_manifests/opencode.toml"),
@@ -695,6 +696,59 @@ mod tests {
         // help text) being mistaken for the actual prompt.
         assert_eq!(
             classify_screen("pi", "Project trust is configured per directory."),
+            AttentionState::Unknown
+        );
+    }
+
+    #[test]
+    fn droid_command_approval_prompt_is_blocked() {
+        let screen = concat!(
+            "  Command to approve · low risk\n",
+            "  ↳ echo approval-probe\n",
+            "  Why this needs approval: This echo command only prints text.\n",
+            "╭──────────────────────────────────────────────────╮\n",
+            "│  Yes, allow                                      │\n",
+            "│  Yes, and always allow low impact commands       │\n",
+            "│  No, cancel                                      │\n",
+            "╰──────────────────────────────────────────────────╯\n",
+            "  ↑↓ navigate   Enter select   Esc cancel"
+        );
+        assert_eq!(classify_screen("droid", screen), AttentionState::Blocked);
+    }
+
+    #[test]
+    fn droid_folder_trust_prompt_is_blocked() {
+        let screen = concat!(
+            "╭──────────────────────────────────────────────╮\n",
+            "│ Trust this folder?                           │\n",
+            "│ D:\\tools\\droid-cal-sandbox                   │\n",
+            "╰──────────────────────────────────────────────╯\n",
+            "> 1. Trust this folder\n",
+            "  2. Exit without trusting\n",
+            "Enter to confirm · Esc to exit"
+        );
+        assert_eq!(classify_screen("droid", screen), AttentionState::Blocked);
+    }
+
+    #[test]
+    fn droid_approval_requires_both_signals() {
+        // Guards against a transcript that merely quotes one of the two
+        // strings (e.g. this file's own source, or a pasted log) being read
+        // as a live prompt.
+        assert_eq!(
+            classify_screen("droid", "The header reads \"Command to approve\"."),
+            AttentionState::Unknown
+        );
+        assert_eq!(
+            classify_screen("droid", "Choose Yes, allow to continue."),
+            AttentionState::Unknown
+        );
+    }
+
+    #[test]
+    fn droid_unmatched_output_is_unknown() {
+        assert_eq!(
+            classify_screen("droid", "some ordinary output that matches no Droid rule"),
             AttentionState::Unknown
         );
     }

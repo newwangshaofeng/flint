@@ -1,0 +1,30 @@
+# Droid (Factory CLI) has no upstream herdr manifest to port from, so these
+# rules were calibrated against the real TUI (droid v0.218.0) in a scratch
+# folder with a throwaway session:
+#
+# - The one blocking gate that was observed is the per-command approval prompt.
+#   Its literal header is "Command to approve" with a "Why this needs approval:"
+#   line and a selectable list whose first entry is "Yes, allow"; the footer
+#   reads "Enter select · Esc cancel". Matching the header and the first option
+#   together is specific enough to avoid a transcript that merely quotes them.
+# - The one-time "Trust this folder?" gate is matched from the same bounded
+#   recent tail (see SCREEN_TAIL_LINE_COUNT in attention_detection.rs). It is
+#   keyed on the dialog title and its footer together, since that pair does not
+#   appear in ordinary output.
+# - Droid writes no OSC window title and no bare BEL: the observed TUI emits
+#   neither, so a Droid thread is only ever classified from the
+#   `Wakeup`-triggered path in store.rs, never from a bell.
+
+[[rules]]
+id = "command_approval_prompt"
+state = "blocked"
+priority = 900
+region = "whole_recent"
+contains = ["command to approve", "yes, allow"]
+
+[[rules]]
+id = "folder_trust_prompt"
+state = "blocked"
+priority = 800
+region = "whole_recent"
+contains = ["trust this folder", "enter to confirm"]

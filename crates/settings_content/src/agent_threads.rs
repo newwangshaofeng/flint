@@ -8,6 +8,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct AgentThreadSettingsContent {
+    /// Command used for new Droid agent threads.
+    pub droid: Option<AgentThreadCommandContent>,
     /// Command used for new Codex agent threads.
     pub codex: Option<AgentThreadCommandContent>,
     /// Command used for new Claude agent threads.
@@ -124,6 +126,29 @@ mod tests {
             serialized["codex"]["initialization_command"],
             "source ~/.profile"
         );
+    }
+
+    #[test]
+    fn droid_agent_thread_settings_round_trip() {
+        let content: AgentThreadSettingsContent = serde_json::from_str(
+            r#"{"droid":{"command":"custom-droid","hidden":true,"initialization_command":"source ~/.profile"}}"#,
+        )
+        .expect("valid Droid agent thread settings");
+
+        let droid = content
+            .droid
+            .as_ref()
+            .expect("Droid settings should be present");
+        assert_eq!(droid.command.as_deref(), Some("custom-droid"));
+        assert_eq!(droid.hidden, Some(true));
+        assert_eq!(
+            droid.initialization_command.as_deref(),
+            Some("source ~/.profile")
+        );
+
+        let serialized = serde_json::to_value(content).expect("serializable agent thread settings");
+        assert_eq!(serialized["droid"]["command"], "custom-droid");
+        assert_eq!(serialized["droid"]["hidden"], true);
     }
 
     #[test]

@@ -10,6 +10,7 @@ mod control;
 mod control_skill;
 #[cfg(windows)]
 mod control_windows;
+mod droid_history;
 mod egress;
 mod handoff;
 mod history;
@@ -42,6 +43,7 @@ use agent_release::{
 };
 use claude_history::ClaudeHistoryProvider;
 use codex_history::CodexHistoryProvider;
+use droid_history::DroidHistoryProvider;
 use history::AgentHistoryProvider;
 pub use history::HistoricalThread;
 use opencode_history::OpenCodeHistoryProvider;
@@ -56,6 +58,8 @@ pub use store::{
 actions!(
     agent_threads,
     [
+        /// Starts a new Droid agent thread.
+        NewDroidThread,
         /// Starts a new Codex agent thread.
         NewCodexThread,
         /// Starts a new Claude agent thread.
@@ -243,6 +247,38 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
     // SQLite/protobuf formats, and AGY exposes no supported quota API for the
     // usage header. Reconsider when stable host-integration APIs exist.
     vec![
+        AgentKindDefinition {
+            id: "droid",
+            label: SharedString::new_static("Droid"),
+            icon: IconName::AiDroid,
+            default_command: "droid",
+            // Droid resolves `~/.factory` from `FACTORY_HOME_OVERRIDE` when it
+            // is set, and from the platform home directory otherwise.
+            home_env_var: "FACTORY_HOME_OVERRIDE",
+            home_env_child: Some(".factory"),
+            home_dir_name: ".factory",
+            history_provider: Some(Arc::new(DroidHistoryProvider)),
+            resume_options: Vec::new(),
+            // Droid's interactive CLI has no flag for assigning a session id to
+            // a fresh session, so fresh Droid threads are bound to the id their
+            // own session file reports (see `store::session_discovery_candidates`).
+            session_id_flag: None,
+            initial_prompt_strategy: InitialPromptStrategy::TrailingPositionalArg,
+            // No pinned standalone releases: managed provisioning for tunneled
+            // remote projects is not supported for Droid yet.
+            official_source_prefixes: &[],
+            releases: &[],
+            self_update_policy: AgentSelfUpdatePolicy {
+                environment: &[("FACTORY_DROID_AUTO_UPDATE_ENABLED", "false")],
+                arguments: &[],
+            },
+            // No tunneled egress allowlist: Droid authenticates against
+            // Factory's own endpoints and has no reviewed host set yet, so a
+            // tunneled route is not offered for this kind.
+            egress_hosts: &[],
+            credential_policy: None,
+            supports_plan_usage: false,
+        },
         AgentKindDefinition {
             id: "codex",
             label: SharedString::new_static("Codex"),
@@ -470,6 +506,7 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
 
 #[derive(Clone, Debug, RegisterSetting)]
 pub struct AgentThreadSettings {
+    pub droid: AgentLaunchCommand,
     pub codex: AgentLaunchCommand,
     pub claude: AgentLaunchCommand,
     pub pi: AgentLaunchCommand,
@@ -545,6 +582,7 @@ impl Settings for AgentThreadSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let content = content.agent_threads.clone().unwrap_or_default();
         Self {
+            droid: launch_command_from_content(content.droid, "droid"),
             codex: launch_command_from_content(content.codex, "codex"),
             claude: launch_command_from_content(content.claude, "claude"),
             pi: launch_command_from_content(content.pi, "pi"),
@@ -586,6 +624,7 @@ pub fn init(cx: &mut App) {
     terminal_control::init(cx);
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(new_droid_thread);
         workspace.register_action(new_codex_thread);
         workspace.register_action(new_claude_thread);
         workspace.register_action(new_pi_thread);
@@ -1097,6 +1136,17 @@ pub(crate) fn launch_new_thread_with_default(
     store::launch_new_thread(workspace, kind, &extra_args, window, cx);
 }
 
+fn new_droid_thread(
+    workspace: &mut Workspace,
+    _: &NewDroidThread,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if let Some(kind) = kind_by_id("droid") {
+        launch_new_thread_with_default(workspace, &kind, window, cx);
+    }
+}
+
 fn new_codex_thread(
     workspace: &mut Workspace,
     _: &NewCodexThread,
@@ -1183,14 +1233,65 @@ mod tests {
     }
 
     #[test]
-    fn registry_orders_opencode_after_existing_agents() {
+    fn registry_orders_droid_first_and_keeps_existing_agents() {
         assert_eq!(
             agent_kind_registry()
                 .into_iter()
                 .map(|kind| kind.id)
                 .collect::<Vec<_>>(),
-            ["codex", "claude", "pi", "opencode"]
+            ["droid", "codex", "claude", "pi", "opencode"]
         );
+    }
+
+    #[test]
+    fn droid_registers_history_without_provider_specific_controls() {
+        let droid = kind_by_id("droid").expect("Droid should be registered");
+
+        assert_eq!(droid.label.as_ref(), "Droid");
+        assert_eq!(droid.icon, IconName::AiDroid);
+        assert_eq!(droid.default_command, "droid");
+        assert!(droid.history_provider.is_some());
+        assert_eq!(droid.home_env_var, "FACTORY_HOME_OVERRIDE");
+        assert_eq!(droid.home_env_child, Some(".factory"));
+        assert_eq!(droid.home_dir_name, ".factory");
+        assert!(droid.resume_options.is_empty());
+        assert_eq!(droid.session_id_flag, None);
+        assert_eq!(
+            droid.initial_prompt_strategy,
+            InitialPromptStrategy::TrailingPositionalArg
+        );
+        assert!(droid.credential_policy().is_none());
+        assert!(!droid.supports_plan_usage());
+        assert!(droid.release_for(remote::RemotePlatform {
+            os: remote::RemoteOs::Linux,
+            arch: remote::RemoteArch::X86_64,
+            libc: None,
+        })
+        .is_none());
+        assert_eq!(
+            droid.self_update_policy().environment,
+            [("FACTORY_DROID_AUTO_UPDATE_ENABLED", "false")]
+        );
+    }
+
+    #[test]
+    fn droid_resume_uses_resume_flag_and_project_directory() {
+        let droid = kind_by_id("droid").expect("Droid should be registered");
+        let provider = droid
+            .history_provider
+            .as_ref()
+            .expect("Droid should have a history provider");
+        let thread = HistoricalThread {
+            session_id: SharedString::from("session-a"),
+            title: SharedString::from("Droid session"),
+            project_root: PathBuf::from("/work/project"),
+            last_activity_at: std::time::UNIX_EPOCH,
+        };
+
+        let command = provider.resume_command(&AgentLaunchCommand::default(), &thread, &[]);
+
+        assert_eq!(command.args, ["--resume", "session-a"]);
+        assert_eq!(command.cwd.as_deref(), Some(std::path::Path::new("/work/project")));
     }
 
     #[test]

@@ -2124,6 +2124,7 @@ fn settings_item_message_id(source: &str) -> Option<&'static str> {
         "Codex Initialization Command" => "settings-codex-initialization-command",
         "Collapse Untracked Diff" => "settings-collapse-untracked-diff",
         "Commit Title Max Length" => "settings-commit-title-max-length",
+        "Droid Initialization Command" => "settings-droid-initialization-command",
         "Diagnostic Badges" => "settings-diagnostic-badges",
         "Diff Stats" => "settings-diff-stats",
         "Drag and Drop" => "settings-drag-and-drop",
@@ -2142,6 +2143,7 @@ fn settings_item_message_id(source: &str) -> Option<&'static str> {
         "Hide .gitignore" => "settings-hide-gitignore",
         "Hide Claude" => "settings-hide-claude",
         "Hide Codex" => "settings-hide-codex",
+        "Hide Droid" => "settings-hide-droid",
         "Hide Hidden" => "settings-hide-hidden",
         "Hide OpenCode" => "settings-hide-opencode",
         "Hide Pi" => "settings-hide-pi",
@@ -2197,6 +2199,9 @@ fn settings_item_message_id(source: &str) -> Option<&'static str> {
         "Hide the Codex section from the Agent Threads panel." => {
             "settings-hide-the-codex-section-from-the-agent-threads"
         }
+        "Hide the Droid section from the Agent Threads panel." => {
+            "settings-hide-the-droid-section-from-the-agent-threads"
+        }
         "Hide the OpenCode section from the Agent Threads panel." => {
             "settings-hide-the-opencode-section-from-the-agent"
         }
@@ -2224,6 +2229,9 @@ fn settings_item_message_id(source: &str) -> Option<&'static str> {
         }
         "Shell command to run before Codex starts. Codex starts only when the command succeeds." => {
             "settings-shell-command-to-run-before-codex-starts-codex"
+        }
+        "Shell command to run before Droid starts. Droid starts only when the command succeeds." => {
+            "settings-shell-command-to-run-before-droid-starts"
         }
         "Shell command to run before OpenCode starts. OpenCode starts only when the command succeeds." => {
             "settings-shell-command-to-run-before-opencode-starts"

@@ -86,6 +86,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             flint_actions::agent_threads::ToggleFocus,
         ),
         MenuItem::action(
+            menu_text(cx, "menu-new-droid-thread"),
+            agent_threads::NewDroidThread,
+        ),
+        MenuItem::action(
             menu_text(cx, "menu-new-codex-thread"),
             agent_threads::NewCodexThread,
         ),
