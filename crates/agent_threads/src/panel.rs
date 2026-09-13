@@ -1402,39 +1402,6 @@ impl AgentThreadsPanel {
         self.set_context_menu(context_menu, position, window, cx);
     }
 
-fn archive_droid_session_file(session_id: &str) {
-    let factory_home = std::env::var("FACTORY_HOME_OVERRIDE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".factory")
-        });
-    let sessions_dir = factory_home.join("sessions");
-    if !sessions_dir.exists() {
-        return;
-    }
-    if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let target_file = path.join(format!("{}.jsonl", session_id));
-                if target_file.exists() {
-                    let archived_file = path.join(format!("{}.jsonl.archived", session_id));
-                    let _ = std::fs::rename(&target_file, &archived_file);
-                    let settings_file = path.join(format!("{}.settings.json", session_id));
-                    if settings_file.exists() {
-                        let archived_settings =
-                            path.join(format!("{}.settings.json.archived", session_id));
-                        let _ = std::fs::rename(&settings_file, &archived_settings);
-                    }
-                    return;
-                }
-            }
-        }
-    }
-}
-
     /// Deploys the session management context menu (Archive session, Close terminal).
     fn deploy_session_menu(
         &mut self,
@@ -2512,6 +2479,35 @@ fn start_handoff(
         }
     })
     .detach();
+}
+
+fn archive_droid_session_file(session_id: &str) {
+    let factory_home = std::env::var("FACTORY_HOME_OVERRIDE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| paths::home_dir().join(".factory"));
+    let sessions_dir = factory_home.join("sessions");
+    if !sessions_dir.exists() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let target_file = path.join(format!("{}.jsonl", session_id));
+                if target_file.exists() {
+                    let archived_file = path.join(format!("{}.jsonl.archived", session_id));
+                    let _ = std::fs::rename(&target_file, &archived_file);
+                    let settings_file = path.join(format!("{}.settings.json", session_id));
+                    if settings_file.exists() {
+                        let archived_settings =
+                            path.join(format!("{}.settings.json.archived", session_id));
+                        let _ = std::fs::rename(&settings_file, &archived_settings);
+                    }
+                    return;
+                }
+            }
+        }
+    }
 }
 
 impl AgentThreadsPanel {
