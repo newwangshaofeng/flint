@@ -195,6 +195,13 @@ jobs:
           Write-Host "Generated artifacts in directory: $artifactDir"
           Get-ChildItem $artifactDir | Select-Object Name, Length
 
+      - name: Upload Build Artifacts to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: flint-windows-x86_64
+          path: release-assets/*
+          if-no-files-found: error
+
       - name: Create or Update GitHub Release
         shell: pwsh
         env:
@@ -205,7 +212,7 @@ jobs:
           IS_DRAFT: ${{ inputs.draft || 'false' }}
         run: |
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE "release-assets"
-          $files = Get-ChildItem -Path $artifactDir -File | ForEach-Object { $_.FullName }
+          $files = @(Get-ChildItem -Path $artifactDir -File | ForEach-Object { $_.FullName })
 
           $notes = @"
           ## Flint Windows x86_64 Release
@@ -231,18 +238,15 @@ jobs:
           $notesFile = Join-Path $env:RUNNER_TEMP "release_notes.md"
           $notes | Set-Content -Path $notesFile -Encoding utf8
 
-          # Check if release already exists
-          $exists = $false
-          try {
-              gh release view "$env:TAG" --json id | Out-Null
-              $exists = $true
-          } catch {
-              $exists = $false
-          }
-
-          if ($exists) {
+          # Check if release already exists using gh cli exit code
+          & gh release view "$($env:TAG)" >$null 2>&1
+          if ($LASTEXITCODE -eq 0) {
               Write-Host "Release $($env:TAG) already exists. Uploading/clobbering assets..."
-              & gh release upload "$($env:TAG)" $files --clobber
+              & gh release upload "$($env:TAG)" @files --clobber
+              if ($LASTEXITCODE -ne 0) {
+                  Write-Error "Failed to upload assets to release $($env:TAG)"
+                  exit 1
+              }
           } else {
               Write-Host "Creating new release $($env:TAG)..."
               $createArgs = @(
@@ -260,6 +264,10 @@ jobs:
 
               $createArgs += $files
               & gh @createArgs
+              if ($LASTEXITCODE -ne 0) {
+                  Write-Error "Failed to create release $($env:TAG)"
+                  exit 1
+              }
           }
 
           Write-Host "Release created/updated successfully at $($env:TAG)!"
