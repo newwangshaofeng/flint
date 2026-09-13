@@ -302,7 +302,21 @@ fn create_skill_link(target: &Path, link_path: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn create_skill_link(target: &Path, link_path: &Path) -> Result<()> {
-    std::os::windows::fs::symlink_dir(target, link_path).context("create skill symlink")
+    match std::os::windows::fs::symlink_dir(target, link_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.raw_os_error() == Some(1314) => {
+            // Error 1314 is ERROR_PRIVILEGE_NOT_HELD ("A required privilege is not held by the client").
+            // On Windows, non-elevated processes require Developer Mode to create directory symlinks.
+            // If Developer Mode is disabled, skip creating the skill link without failing app startup.
+            log::warn!(
+                "Failed to create skill symlink at {:?} -> {:?}: Windows Developer Mode is not enabled (os error 1314). Skipping.",
+                link_path,
+                target
+            );
+            Ok(())
+        }
+        Err(error) => Err(error).context("create skill symlink"),
+    }
 }
 
 #[cfg(not(windows))]

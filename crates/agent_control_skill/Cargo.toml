@@ -14,6 +14,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+log.workspace = true
 paths.workspace = true
 serde.workspace = true
 serde_json.workspace = true
