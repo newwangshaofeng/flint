@@ -13,14 +13,15 @@ use gpui::{
 };
 use settings::{DockSide, Settings, SettingsStore};
 use ui::{
-    Color, ContextMenu, Disclosure, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
+    Color, CommonAnimationExt, ContextMenu, Disclosure, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
     LabelSize, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::paths::PathStyle;
 use workspace::{
-    MultiWorkspace, Workspace,
+    MultiWorkspace, Toast, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
+    notifications::NotificationId,
 };
 
 use crate::handoff;
@@ -1401,6 +1402,123 @@ impl AgentThreadsPanel {
         self.set_context_menu(context_menu, position, window, cx);
     }
 
+fn archive_droid_session_file(session_id: &str) {
+    let factory_home = std::env::var("FACTORY_HOME_OVERRIDE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".factory")
+        });
+    let sessions_dir = factory_home.join("sessions");
+    if !sessions_dir.exists() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let target_file = path.join(format!("{}.jsonl", session_id));
+                if target_file.exists() {
+                    let archived_file = path.join(format!("{}.jsonl.archived", session_id));
+                    let _ = std::fs::rename(&target_file, &archived_file);
+                    let settings_file = path.join(format!("{}.settings.json", session_id));
+                    if settings_file.exists() {
+                        let archived_settings =
+                            path.join(format!("{}.settings.json.archived", session_id));
+                        let _ = std::fs::rename(&settings_file, &archived_settings);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+}
+
+    /// Deploys the session management context menu (Archive session, Close terminal).
+    fn deploy_session_menu(
+        &mut self,
+        session_id: Option<SharedString>,
+        live_terminal_item_id: Option<gpui::EntityId>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let store = self.store.clone();
+        let panel_weak = cx.entity().downgrade();
+        let session_id_clone = session_id.clone();
+        let live_item_id = live_terminal_item_id;
+
+        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, cx| {
+            let workspace = workspace.clone();
+            let store = store.clone();
+            let panel_weak = panel_weak.clone();
+            let session_id = session_id_clone.clone();
+
+            context_menu = context_menu.entry("归档会话", None, move |window, cx| {
+                if let Some(terminal_item_id) = live_item_id {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return;
+                    };
+                    store.update(cx, |store, cx| {
+                        store.begin_shutdown(terminal_item_id, cx);
+                    });
+                    workspace.update(cx, |workspace, cx| {
+                        if let Some(pane) = workspace.pane_for_item_id(terminal_item_id) {
+                            pane.update(cx, |pane, cx| {
+                                pane.close_item_by_id(terminal_item_id, workspace::SaveIntent::Skip, cx);
+                            });
+                        }
+                    });
+                }
+                if let Some(ref sid) = session_id {
+                    let sid_str = sid.to_string();
+                    cx.background_spawn(async move {
+                        archive_droid_session_file(&sid_str);
+                    })
+                    .detach();
+                }
+                if let Some(panel) = panel_weak.upgrade() {
+                    panel.update(cx, |this, cx| {
+                        this.sync_history("droid", Some(Duration::from_millis(150)), cx);
+                    });
+                }
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_toast(
+                            Toast::new(NotificationId::unique(), "已归档会话"),
+                            cx,
+                        );
+                    });
+                }
+            });
+
+            if let Some(terminal_item_id) = live_item_id {
+                let workspace = workspace.clone();
+                let store = store.clone();
+                context_menu = context_menu.entry("关闭终端", None, move |_, cx| {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return;
+                    };
+                    store.update(cx, |store, cx| {
+                        store.begin_shutdown(terminal_item_id, cx);
+                    });
+                    workspace.update(cx, |workspace, cx| {
+                        if let Some(pane) = workspace.pane_for_item_id(terminal_item_id) {
+                            pane.update(cx, |pane, cx| {
+                                pane.close_item_by_id(terminal_item_id, workspace::SaveIntent::Skip, cx);
+                            });
+                        }
+                    });
+                });
+            }
+
+            context_menu
+        });
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
     /// Deploys the "Hand off to <kind>" menu for a live thread row, offering
     /// every other registered kind as a target.
     fn deploy_handoff_menu(
@@ -1963,9 +2081,26 @@ impl AgentThreadsPanel {
         let terminal_item_id = metadata.terminal_item_id;
         let menu_metadata = metadata.clone();
         let is_active = active_terminal_item_id == Some(terminal_item_id);
-        let status_color = status_color_for_display_status(
-            self.store.read(cx).thread_display_status(terminal_item_id),
-        );
+        let display_status = self.store.read(cx).thread_display_status(terminal_item_id);
+        let status_color = status_color_for_display_status(display_status);
+        let is_busy = matches!(display_status, None | Some(ThreadDisplayStatus::Busy));
+
+        let indicator: AnyElement = if is_busy {
+            Icon::new(IconName::LoadCircle)
+                .size(IconSize::Indicator)
+                .color(status_color)
+                .with_keyed_rotate_animation(
+                    ("agent-thread-busy-spinner", terminal_item_id.as_u64()),
+                    1,
+                )
+                .into_any_element()
+        } else {
+            Icon::new(IconName::Circle)
+                .size(IconSize::Indicator)
+                .color(status_color)
+                .into_any_element()
+        };
+
         h_flex()
             .id(("agent-thread-live-row", terminal_item_id.as_u64()))
             .w_full()
@@ -1983,28 +2118,16 @@ impl AgentThreadsPanel {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    let Some(source_kind) = this
-                        .registry
-                        .iter()
-                        .find(|kind| kind.id == menu_metadata.kind_id)
-                        .cloned()
-                    else {
-                        return;
-                    };
-                    this.deploy_handoff_menu(
-                        source_kind,
-                        menu_metadata.clone(),
+                    this.deploy_session_menu(
+                        menu_metadata.resumed_session_id.clone(),
+                        Some(terminal_item_id),
                         event.position,
                         window,
                         cx,
                     );
                 }),
             )
-            .child(
-                Icon::new(IconName::Circle)
-                    .size(IconSize::Indicator)
-                    .color(status_color),
-            )
+            .child(indicator)
             .child(
                 Label::new(metadata.title)
                     .size(LabelSize::Small)
@@ -2035,10 +2158,33 @@ impl AgentThreadsPanel {
         let is_live = live_terminal_item_id.is_some();
         let is_active =
             live_terminal_item_id.is_some() && live_terminal_item_id == active_terminal_item_id;
-        let status_color =
-            status_color_for_display_status(live_terminal_item_id.and_then(|terminal_item_id| {
-                self.store.read(cx).thread_display_status(terminal_item_id)
-            }));
+        let display_status = live_terminal_item_id.and_then(|terminal_item_id| {
+            self.store.read(cx).thread_display_status(terminal_item_id)
+        });
+        let status_color = status_color_for_display_status(display_status);
+        let is_busy = is_live && matches!(display_status, None | Some(ThreadDisplayStatus::Busy));
+
+        let icon_element: AnyElement = if is_busy {
+            Icon::new(IconName::LoadCircle)
+                .size(IconSize::Indicator)
+                .color(status_color)
+                .with_keyed_rotate_animation(
+                    SharedString::from(format!("agent-thread-hist-busy-{}", thread.session_id)),
+                    1,
+                )
+                .into_any_element()
+        } else if is_live {
+            Icon::new(IconName::Circle)
+                .size(IconSize::Indicator)
+                .color(status_color)
+                .into_any_element()
+        } else {
+            Icon::new(IconName::HistoryRerun)
+                .size(IconSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
+        };
+
         let resume_option_label = thread_resume_option_label(cx, kind, &thread.session_id);
         let resume_option_visual = thread_resume_option_visual(cx, kind, &thread.session_id);
         h_flex()
@@ -2055,29 +2201,16 @@ impl AgentThreadsPanel {
             })
             .hover(|style| style.bg(cx.theme().colors().element_hover))
             .when_some(live_terminal_item_id, |row, terminal_item_id| {
-                let handoff_kind = kind.clone();
-                let handoff_metadata = AgentThreadMetadata {
-                    terminal_item_id,
-                    kind_id: kind.id,
-                    title: thread.title.clone(),
-                    project_root: thread.project_root.clone(),
-                    // Synthetic metadata for the handoff menu only -- never
-                    // inserted into the store, so there's no real tie to
-                    // report; project_root is the closest honest value.
-                    tied_worktree_root: thread.project_root.clone(),
-                    tied_repo_main_root: None,
-                    launched_at: thread.last_activity_at,
-                    resumed_session_id: Some(thread.session_id.clone()),
-                };
+                let right_click_thread = thread.clone();
                 row.on_click(cx.listener(move |this, _, window, cx| {
                     this.focus_live_thread(terminal_item_id, window, cx);
                 }))
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                        this.deploy_handoff_menu(
-                            handoff_kind.clone(),
-                            handoff_metadata.clone(),
+                        this.deploy_session_menu(
+                            Some(right_click_thread.session_id.clone()),
+                            Some(terminal_item_id),
                             event.position,
                             window,
                             cx,
@@ -2086,6 +2219,7 @@ impl AgentThreadsPanel {
                 )
             })
             .when(!is_live, |row| {
+                let right_click_thread = thread.clone();
                 row.on_click(cx.listener(move |this, _, window, cx| {
                     let args = store::resolve_thread_launch_args(
                         cx,
@@ -2097,9 +2231,9 @@ impl AgentThreadsPanel {
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                        this.deploy_resume_options_menu(
-                            menu_kind.clone(),
-                            menu_thread.clone(),
+                        this.deploy_session_menu(
+                            Some(right_click_thread.session_id.clone()),
+                            None,
                             event.position,
                             window,
                             cx,
@@ -2112,23 +2246,7 @@ impl AgentThreadsPanel {
                     .min_w_0()
                     .flex_1()
                     .gap_2()
-                    .child(
-                        Icon::new(if is_live {
-                            IconName::Circle
-                        } else {
-                            IconName::HistoryRerun
-                        })
-                        .size(if is_live {
-                            IconSize::Indicator
-                        } else {
-                            IconSize::Small
-                        })
-                        .color(if is_live {
-                            status_color
-                        } else {
-                            Color::Muted
-                        }),
-                    )
+                    .child(icon_element)
                     .child(
                         Label::new(thread.title)
                             .size(LabelSize::Small)

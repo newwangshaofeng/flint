@@ -16,6 +16,13 @@
 #   `Wakeup`-triggered path in store.rs, never from a bell.
 
 [[rules]]
+id = "droid_working"
+state = "working"
+priority = 850
+region = "whole_recent"
+contains = ["press esc to stop"]
+
+[[rules]]
 id = "command_approval_prompt"
 state = "blocked"
 priority = 900
@@ -25,6 +32,18 @@ contains = ["command to approve", "yes, allow"]
 [[rules]]
 id = "folder_trust_prompt"
 state = "blocked"
-priority = 800
+priority = 900
 region = "whole_recent"
 contains = ["trust this folder", "enter to confirm"]
+
+[[rules]]
+id = "droid_idle"
+state = "idle"
+priority = 700
+region = "whole_recent"
+contains = ["? for help"]
+not = [
+  { contains = ["press esc to stop"] },
+  { contains = ["command to approve"] },
+  { contains = ["trust this folder"] },
+]

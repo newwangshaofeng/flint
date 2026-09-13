@@ -754,6 +754,18 @@ mod tests {
     }
 
     #[test]
+    fn droid_press_esc_to_stop_is_working() {
+        let screen = "Thinking... (Press ESC to stop)";
+        assert_eq!(classify_screen("droid", screen), AttentionState::Working);
+    }
+
+    #[test]
+    fn droid_ready_prompt_is_idle() {
+        let screen = "[1m 9s, context: 7%] ? for help | MCP X";
+        assert_eq!(classify_screen("droid", screen), AttentionState::Idle);
+    }
+
+    #[test]
     fn claude_busy_spinner_osc_title_is_working() {
         let state = classify(
             "claude",
