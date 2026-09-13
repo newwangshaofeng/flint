@@ -2744,6 +2744,7 @@ mod tests {
             store.update_user_settings(cx, |settings| {
                 let content = settings.agent_threads.get_or_insert_default();
                 let command = match kind_id {
+                    "droid" => content.droid.get_or_insert_default(),
                     "codex" => content.codex.get_or_insert_default(),
                     "claude" => content.claude.get_or_insert_default(),
                     "pi" => content.pi.get_or_insert_default(),
@@ -2823,6 +2824,7 @@ mod tests {
             store.update_user_settings(cx, |settings| {
                 let content = settings.agent_threads.get_or_insert_default();
                 let command = match kind_id {
+                    "droid" => content.droid.get_or_insert_default(),
                     "codex" => content.codex.get_or_insert_default(),
                     "claude" => content.claude.get_or_insert_default(),
                     "pi" => content.pi.get_or_insert_default(),
@@ -2843,6 +2845,7 @@ mod tests {
             store.update_user_settings(cx, |settings| {
                 let content = settings.agent_threads.get_or_insert_default();
                 let command = match kind_id {
+                    "droid" => content.droid.get_or_insert_default(),
                     "codex" => content.codex.get_or_insert_default(),
                     "claude" => content.claude.get_or_insert_default(),
                     "pi" => content.pi.get_or_insert_default(),

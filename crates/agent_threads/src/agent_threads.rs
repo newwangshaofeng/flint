@@ -569,6 +569,7 @@ impl RemoteAgentRoutingSettings {
 impl AgentThreadSettings {
     pub fn command_for_kind(&self, kind_id: &str) -> &AgentLaunchCommand {
         match kind_id {
+            "droid" => &self.droid,
             "codex" => &self.codex,
             "claude" => &self.claude,
             "pi" => &self.pi,
@@ -1628,6 +1629,10 @@ mod tests {
     fn initialization_command_is_per_agent_and_ignores_whitespace_only_values() {
         let settings = AgentThreadSettings::from_settings(&settings::SettingsContent {
             agent_threads: Some(settings::AgentThreadSettingsContent {
+                droid: Some(settings::AgentThreadCommandContent {
+                    initialization_command: Some(" echo init-droid ".to_string()),
+                    ..Default::default()
+                }),
                 codex: Some(settings::AgentThreadCommandContent {
                     initialization_command: Some(" source ~/.profile ".to_string()),
                     ..Default::default()
@@ -1641,6 +1646,17 @@ mod tests {
             ..Default::default()
         });
 
+        assert_eq!(
+            settings
+                .command_for_kind("droid")
+                .initialization_command
+                .as_deref(),
+            Some(" echo init-droid ")
+        );
+        assert_eq!(
+            settings.command_for_kind("droid").command.as_deref(),
+            Some("droid")
+        );
         assert_eq!(
             settings
                 .command_for_kind("codex")
