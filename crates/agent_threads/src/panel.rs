@@ -1011,17 +1011,30 @@ impl AgentThreadsPanel {
     /// async and cancellable: a newer scan replaces `build_scan_task`,
     /// dropping the older task and with it any pending reads.
     fn refresh_build_commands(&mut self, cx: &mut Context<Self>) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-        let project = workspace.read(cx).project().clone();
-        let candidates = build_commands::collect_candidates(project.read(cx), cx);
         let fs = self.fs.clone();
-        let remote_client = project
-            .read(cx)
-            .remote_client()
-            .map(|remote_client| remote_client.read(cx).proto_client());
+        // The workspace read is deferred: `set_active` runs from
+        // `Dock::add_panel` while the workspace is already being updated, so
+        // reading it here would panic on the double lease.
         let task = cx.spawn(async move |this, cx| {
+            let Some((candidates, remote_client)) = this
+                .update(cx, |this, cx| {
+                    if !this.active {
+                        return None;
+                    }
+                    let workspace = this.workspace.upgrade()?;
+                    let project = workspace.read(cx).project().clone();
+                    let candidates = build_commands::collect_candidates(project.read(cx), cx);
+                    let remote_client = project
+                        .read(cx)
+                        .remote_client()
+                        .map(|remote_client| remote_client.read(cx).proto_client());
+                    Some((candidates, remote_client))
+                })
+                .ok()
+                .flatten()
+            else {
+                return;
+            };
             let mut projects = Vec::new();
             for candidate in candidates {
                 let absolute_path = candidate.absolute_path();
