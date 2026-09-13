@@ -688,6 +688,12 @@ impl AgentThreadsPanel {
             let build_subscription = cx.subscribe(
                 &project,
                 |this: &mut AgentThreadsPanel, _, event: &project::Event, cx| {
+                    // A hidden panel has nothing to show and re-reads every
+                    // manifest on activation, so skip the work here rather
+                    // than scanning for a section nobody can see.
+                    if !this.active {
+                        return;
+                    }
                     let known_manifests = this
                         .build_projects
                         .iter()
