@@ -43,6 +43,28 @@ If you have External Agents installed, Zed will detect whether you have existing
 
 > **Note:** Thread import is subject to agent support. Some agents (such as Cursor and Gemini CLI) are not currently supported.
 
+### Build Shortcuts {#build-shortcuts}
+
+The Threads Sidebar detects build projects in your open projects and lists their common commands in a **Build** section at the top of the sidebar. Use it to run builds without leaving the panel or remembering the exact invocation.
+
+Zed recognizes these manifests:
+
+| Manifest             | Build system | Commands                                                                              |
+| -------------------- | ------------ | ------------------------------------------------------------------------------------- |
+| `package.json`       | npm          | One `npm run <script>` entry per script, or `npm install` when no scripts are defined |
+| `pom.xml`            | Maven        | The standard lifecycle: `clean`, `validate`, `compile`, `test`, `package`, and so on  |
+| `go.mod`             | Go           | `go build`, `go test`, `go vet`, and `go fmt`, each scoped to `./...`                 |
+| `Cargo.toml`         | Cargo        | `cargo build`, `run`, `test`, `check`, `clippy`, and `fmt`                            |
+| `.sln` and `.csproj` | .NET         | `dotnet restore`, `build`, and `test`, plus `run` for individual projects             |
+
+Projects are grouped by build system and shown as a collapsible tree. Each project node shows its name and build system; expand it to see the available commands.
+
+To run a command, double-click its row or click the play icon that appears when you hover the row. Zed runs it in the [integrated terminal](../terminal.md) as a [task](../tasks.md), with the working folder set to the one that holds the manifest. Because each command's task label includes the project name, running `npm run build` in two different projects opens two separate terminal tabs instead of reusing one.
+
+The list refreshes when you add or remove a project, and when you create, edit, or delete a manifest. Editing an ordinary source file does not re-read the manifests. If Zed finds no build projects, the **Build** section stays hidden.
+
+Dependency folders such as `node_modules`, `target`, `vendor`, `obj`, `dist`, and `__pycache__` are skipped even when they are committed to the repository, so they don't flood the list. A `.csproj` file covered by a sibling solution is left out too, since the solution already represents it.
+
 ## Running Multiple Threads {#running-multiple-threads}
 
 Each thread runs independently, so you can send a prompt, open a second thread, and give it a different task while the first continues working. To scope a new thread to a specific project, hover over that project's header in the Threads Sidebar and click the `+` button, or use {#action agents_sidebar::NewThreadInGroup} from the keyboard. See [Creating New Threads](./agent-panel.md#new-thread) for the other entry points.

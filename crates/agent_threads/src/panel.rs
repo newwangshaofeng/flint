@@ -24,6 +24,7 @@ use workspace::{
     notifications::NotificationId,
 };
 
+use crate::build_commands::{self, BuildCommand, BuildProject};
 use crate::handoff;
 use crate::history::{self, project_worktree_roots};
 use crate::plan_usage::{PlanUsage, UsageColorBand, query_plan_usage};
@@ -51,6 +52,46 @@ fn status_color_for_display_status(status: Option<ThreadDisplayStatus>) -> Color
         Some(ThreadDisplayStatus::Blocked) => Color::Error,
         Some(ThreadDisplayStatus::Finished) => Color::Warning,
         Some(ThreadDisplayStatus::Idle) => Color::Muted,
+    }
+}
+
+/// The icon shown next to a detected build project, mirroring the tool's
+/// own identity where Flint has an icon for it.
+fn build_system_icon(system: build_commands::BuildSystem) -> IconName {
+    match system {
+        build_commands::BuildSystem::Node => IconName::Json,
+        build_commands::BuildSystem::Maven => IconName::FileCode,
+        build_commands::BuildSystem::Go => IconName::FileCode,
+        build_commands::BuildSystem::Dotnet => IconName::FileCode,
+        build_commands::BuildSystem::Cargo => IconName::FileRust,
+    }
+}
+
+/// Whether a project event could have changed which build manifests exist or
+/// what they contain, given the manifests currently detected.
+///
+/// A blanket rescan on every `WorktreeUpdatedEntries` would re-read every
+/// manifest on each file save, so this narrows to changes that can actually
+/// matter: a manifest file appearing, changing, or disappearing, or a
+/// directory change that would move manifests already known about (a rename
+/// or delete). Unrelated activity -- diagnostics, language servers, git
+/// repositories, edits to ordinary source files -- is ignored.
+fn project_event_affects_build_commands(
+    event: &project::Event,
+    known_manifests: &[Arc<util::rel_path::RelPath>],
+) -> bool {
+    match event {
+        project::Event::WorktreeAdded(_)
+        | project::Event::WorktreeRemoved(_)
+        | project::Event::WorktreeOrderChanged => true,
+        project::Event::WorktreeUpdatedEntries(_, changes) => changes.iter().any(|(path, _, _)| {
+            path.file_name().is_some_and(|name| {
+                build_commands::BuildSystem::from_manifest_file_name(name).is_some()
+            }) || known_manifests
+                .iter()
+                .any(|manifest| manifest.starts_with(path))
+        }),
+        _ => false,
     }
 }
 
@@ -368,6 +409,19 @@ pub struct AgentThreadsPanel {
     plan_usage_task: Option<Task<()>>,
     http_client: Arc<dyn http_client::HttpClient>,
     active: bool,
+    /// Auto-detected build projects for the "Build" section, refreshed when
+    /// the worktree's manifests change. Sorted by root then manifest path.
+    build_projects: Vec<build_commands::BuildProject>,
+    /// The in-flight manifest scan. Held so a newer scan (or deactivation)
+    /// cancels the older one instead of letting stale results land.
+    build_scan_task: Option<Task<()>>,
+    build_section_collapsed: bool,
+    /// Project node paths whose command lists are collapsed. Keyed by the
+    /// manifest path rather than an index so collapsing survives a rescan.
+    collapsed_build_projects: HashSet<PathBuf>,
+    /// Set once a scan has published, so the section can tell "no build
+    /// systems here" from "still scanning".
+    build_scanned: bool,
     /// Whether this project's git state (branches, worktrees, status) has
     /// completed its initial load at least once. Starts `false` and is
     /// flipped by a one-time spawned task awaiting
@@ -631,6 +685,19 @@ impl AgentThreadsPanel {
                     }
                 },
             );
+            let build_subscription = cx.subscribe(
+                &project,
+                |this: &mut AgentThreadsPanel, _, event: &project::Event, cx| {
+                    let known_manifests = this
+                        .build_projects
+                        .iter()
+                        .map(|project| project.relative_manifest_path.clone())
+                        .collect::<Vec<_>>();
+                    if project_event_affects_build_commands(event, &known_manifests) {
+                        this.refresh_build_commands(cx);
+                    }
+                },
+            );
             let settings = AgentThreadSettings::get_global(cx);
             let mut plan_usage_settings = (
                 settings.show_plan_usage,
@@ -669,6 +736,7 @@ impl AgentThreadsPanel {
                     settings_subscription,
                     active_item_subscription,
                     terminal_subscription,
+                    build_subscription,
                 ],
                 history_tasks: HashMap::default(),
                 history_index,
@@ -677,6 +745,11 @@ impl AgentThreadsPanel {
                 plan_usage_task: None,
                 http_client,
                 active: false,
+                build_projects: Vec::new(),
+                build_scan_task: None,
+                build_section_collapsed: false,
+                collapsed_build_projects: HashSet::default(),
+                build_scanned: false,
                 git_ready: false,
                 _git_ready_task: git_ready_task,
             };
@@ -923,6 +996,98 @@ impl AgentThreadsPanel {
             }
         });
         self.history_tasks.insert(kind_id, task);
+    }
+
+    /// Rescans the visible worktrees for build manifests and republishes the
+    /// Build section's contents.
+    ///
+    /// Manifest contents are read over `Fs` (or the remote host), so this is
+    /// async and cancellable: a newer scan replaces `build_scan_task`,
+    /// dropping the older task and with it any pending reads.
+    fn refresh_build_commands(&mut self, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let project = workspace.read(cx).project().clone();
+        let candidates = build_commands::collect_candidates(project.read(cx), cx);
+        let fs = self.fs.clone();
+        let remote_client = project
+            .read(cx)
+            .remote_client()
+            .map(|remote_client| remote_client.read(cx).proto_client());
+        let task = cx.spawn(async move |this, cx| {
+            let mut projects = Vec::new();
+            for candidate in candidates {
+                let absolute_path = candidate.absolute_path();
+                let contents = match build_commands::load_manifest(
+                    &fs,
+                    remote_client.as_ref(),
+                    &absolute_path,
+                )
+                .await
+                {
+                    Ok(contents) => contents,
+                    Err(error) => {
+                        log::warn!(
+                            "agent_threads: failed to read build manifest {}: {error:#}",
+                            absolute_path.display()
+                        );
+                        continue;
+                    }
+                };
+                if let Some(project) = build_commands::build_project(&candidate, &contents) {
+                    projects.push(project);
+                }
+            }
+            if this
+                .update(cx, |this, cx| {
+                    this.build_projects = projects;
+                    this.build_scanned = true;
+                    cx.notify();
+                })
+                .is_err()
+            {
+                log::debug!("agent_threads: panel closed while scanning build manifests");
+            }
+        });
+        self.build_scan_task = Some(task);
+    }
+
+    fn toggle_build_section_collapsed(&mut self, cx: &mut Context<Self>) {
+        self.build_section_collapsed = !self.build_section_collapsed;
+        cx.notify();
+    }
+
+    fn toggle_build_project_collapsed(&mut self, manifest_path: PathBuf, cx: &mut Context<Self>) {
+        if !self.collapsed_build_projects.remove(&manifest_path) {
+            self.collapsed_build_projects.insert(manifest_path);
+        }
+        cx.notify();
+    }
+
+    /// Schedules `command` as a task in the integrated terminal.
+    fn run_build_command(
+        &mut self,
+        project: &BuildProject,
+        command: &BuildCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let template = command.task_template(&project.name);
+        let task_context = project.task_context(command);
+        workspace.update(cx, |workspace, cx| {
+            workspace.schedule_task(
+                project::TaskSourceKind::UserInput,
+                &template,
+                &task_context,
+                false,
+                window,
+                cx,
+            );
+        });
     }
 
     /// Starts a filesystem watcher for each visible kind on a local project so
@@ -1745,6 +1910,218 @@ impl AgentThreadsPanel {
                 }))
                 .into_any_element()
         }
+    }
+
+    /// Renders the "Build" section, or `None` when the project has no
+    /// detectable build systems.
+    ///
+    /// Once a scan completes with nothing to show the section disappears
+    /// rather than occupying space with an empty state, matching how
+    /// JetBrains hides tool windows that have no content for the project.
+    /// While the first scan is still running the header is shown so a
+    /// detected project doesn't pop in with no explanation.
+    fn render_build_section(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.build_projects.is_empty() && self.build_scanned {
+            return None;
+        }
+        let collapsed = self.build_section_collapsed;
+        let project_count = self.build_projects.len();
+        let projects = self.build_projects.clone();
+
+        let header = h_flex()
+            .id("agent-thread-build-header")
+            .w_full()
+            .justify_between()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(
+                        Disclosure::new("agent-thread-build-disclosure", !collapsed)
+                            .on_toggle_expanded(Some(Arc::new(cx.listener(move |this, _, _, cx| {
+                                this.toggle_build_section_collapsed(cx);
+                            }))
+                                as Arc<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App)>)),
+                    )
+                    .child(
+                        Icon::new(IconName::ToolHammer)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(localization::text(cx, "agent-threads-build-title"))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+            .child(
+                Label::new(project_count.to_string())
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            );
+
+        let mut body_children: Vec<AnyElement> = Vec::new();
+        if !collapsed {
+            if projects.is_empty() {
+                body_children.push(
+                    Label::new(localization::text(cx, "agent-threads-build-scanning"))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .into_any_element(),
+                );
+            } else {
+                for (index, project) in projects.iter().enumerate() {
+                    body_children.push(self.render_build_project(project, index, cx));
+                }
+            }
+        }
+
+        Some(
+            v_flex()
+                .id("agent-thread-build-section")
+                .w_full()
+                .child(header)
+                .children(body_children)
+                .into_any_element(),
+        )
+    }
+
+    fn render_build_project(
+        &mut self,
+        project: &BuildProject,
+        project_index: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let manifest_path = project.manifest_path.clone();
+        let collapsed = self.collapsed_build_projects.contains(&manifest_path);
+        let project_id = SharedString::from(format!("agent-thread-build-project-{project_index}"));
+
+        let header = h_flex()
+            .id(project_id)
+            .w_full()
+            .gap_1p5()
+            .items_center()
+            .pl_6()
+            .pr_2()
+            .py_1()
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .child(
+                Disclosure::new(
+                    SharedString::from(format!(
+                        "agent-thread-build-project-disclosure-{project_index}"
+                    )),
+                    !collapsed,
+                )
+                .on_toggle_expanded(Some(Arc::new(cx.listener(
+                    move |this, _, _, cx| {
+                        this.toggle_build_project_collapsed(manifest_path.clone(), cx);
+                    },
+                ))
+                    as Arc<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App)>)),
+            )
+            .child(
+                Icon::new(build_system_icon(project.system))
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                Label::new(project.name.clone())
+                    .size(LabelSize::Small)
+                    .truncate(),
+            )
+            .child(
+                Label::new(project.system.label())
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            );
+
+        let mut children: Vec<AnyElement> = vec![header.into_any_element()];
+        if !collapsed {
+            for (command_index, command) in project.commands.iter().enumerate() {
+                children.push(self.render_build_command(
+                    project,
+                    command,
+                    project_index,
+                    command_index,
+                    cx,
+                ));
+            }
+        }
+
+        v_flex().w_full().children(children).into_any_element()
+    }
+
+    /// One command row: double-click the row or click the play button to run
+    /// it, matching the IntelliJ and WebStorm tool window behavior.
+    fn render_build_command(
+        &mut self,
+        project: &BuildProject,
+        command: &BuildCommand,
+        project_index: usize,
+        command_index: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let group_name = SharedString::from(format!(
+            "agent-thread-build-command-{project_index}-{command_index}"
+        ));
+        let play_button_id = SharedString::from(format!(
+            "agent-thread-build-run-{project_index}-{command_index}"
+        ));
+        let run_project = project.clone();
+        let run_command = command.clone();
+
+        h_flex()
+            .id(SharedString::from(format!(
+                "agent-thread-build-command-row-{project_index}-{command_index}"
+            )))
+            .group(group_name.clone())
+            .w_full()
+            .gap_1p5()
+            .items_center()
+            .pl_6()
+            .pr_2()
+            .py_0p5()
+            .rounded_sm()
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .on_click(cx.listener({
+                let project = run_project.clone();
+                let command = run_command.clone();
+                move |this, event: &gpui::ClickEvent, window, cx| {
+                    if event.click_count() > 1 {
+                        this.run_build_command(&project, &command, window, cx);
+                    }
+                }
+            }))
+            .child(
+                Label::new(command.label.clone())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .truncate(),
+            )
+            .child(div().flex_1())
+            .child(
+                IconButton::new(play_button_id, IconName::PlayFilled)
+                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text(localization::text(
+                        cx,
+                        "agent-threads-build-run-tooltip",
+                    )))
+                    .visible_on_hover(group_name)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.run_build_command(&run_project, &run_command, window, cx);
+                    })),
+            )
+            .into_any_element()
     }
 
     fn render_section(
@@ -2642,6 +3019,7 @@ impl Panel for AgentThreadsPanel {
         self.active = active;
         if active {
             self.sync_plan_usage_polling(cx);
+            self.refresh_build_commands(cx);
             cx.spawn(async move |this: WeakEntity<Self>, cx| {
                 this.update(cx, |this, cx| {
                     this.refresh_history(cx);
@@ -2655,6 +3033,11 @@ impl Panel for AgentThreadsPanel {
             self.sync_plan_usage_polling(cx);
             self.history_tasks.clear();
             self.history_watchers.clear();
+            // Drop the in-flight manifest scan so a hidden panel isn't
+            // reading manifests, and so the next activation rescans rather
+            // than showing whatever was detected before it was hidden.
+            self.build_scan_task.take();
+            self.build_scanned = false;
         }
     }
 }
@@ -2687,6 +3070,9 @@ impl Render for AgentThreadsPanel {
 
         let registry = self.visible_registry(cx);
         let mut sections = Vec::new();
+        if let Some(build_section) = self.render_build_section(window, cx) {
+            sections.push(build_section);
+        }
         for kind in &registry {
             sections.push(self.render_section(
                 kind,
@@ -5185,6 +5571,274 @@ mod tests {
             Some(ThreadDisplayStatus::Blocked),
             "disabling the desktop notification should not disable attention tracking -- \
              the panel's status dot should still reflect the thread's real state"
+        );
+    }
+
+    /// A terminal provider that records what would have been spawned instead
+    /// of starting a real process, so the build section's execution path can
+    /// be asserted without a PTY.
+    struct RecordingTerminalProvider {
+        spawned_labels: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl workspace::TerminalProvider for RecordingTerminalProvider {
+        fn spawn(
+            &self,
+            task: task::SpawnInTerminal,
+            _window: &mut Window,
+            _cx: &mut App,
+        ) -> Task<Option<anyhow::Result<std::process::ExitStatus>>> {
+            self.spawned_labels
+                .lock()
+                .expect("spawned label mutex should not be poisoned")
+                .push(task.label);
+            Task::ready(Some(Ok(std::process::ExitStatus::default())))
+        }
+    }
+
+    /// Builds a workspace whose project contains `files`, creates the panel,
+    /// and waits for the manifest scan to publish.
+    async fn build_section_panel(
+        cx: &mut TestAppContext,
+        files: serde_json::Value,
+    ) -> (WindowHandle<MultiWorkspace>, Entity<AgentThreadsPanel>) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        let root = Path::new(SPAWNING_TEST_ROOT.as_str());
+        fs.insert_tree(root, files).await;
+        let project = Project::test(fs, [root], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    AgentThreadsPanel::new(workspace, window, cx)
+                })
+            })
+            .expect("failed to create panel");
+
+        panel.update(cx, |panel, cx| {
+            panel.active = true;
+            panel.refresh_build_commands(cx);
+        });
+        wait_for_build_scan(&panel, cx).await;
+        (window_handle, panel)
+    }
+
+    async fn wait_for_build_scan(panel: &Entity<AgentThreadsPanel>, cx: &mut TestAppContext) {
+        for _ in 0..50 {
+            cx.run_until_parked();
+            if panel.read_with(cx, |panel, _| panel.build_scanned) {
+                return;
+            }
+            cx.executor().timer(Duration::from_millis(50)).await;
+        }
+        panic!("build manifest scan never completed");
+    }
+
+    fn detected_build_projects(
+        panel: &Entity<AgentThreadsPanel>,
+        cx: &mut TestAppContext,
+    ) -> Vec<BuildProject> {
+        panel.read_with(cx, |panel, _| panel.build_projects.clone())
+    }
+
+    #[gpui::test]
+    async fn build_section_detects_every_supported_project_type(cx: &mut TestAppContext) {
+        let (_, panel) = build_section_panel(
+            cx,
+            serde_json::json!({
+                "web": {
+                    "package.json": r#"{"name":"web","scripts":{"dev":"vite","build":"vite build"}}"#,
+                },
+                "service": {
+                    "pom.xml": "<project><artifactId>service</artifactId></project>",
+                },
+                "cli": {
+                    "go.mod": "module example.com/cli\n",
+                },
+                "desktop": {
+                    "Desktop.sln": "",
+                },
+                "native": {
+                    "Cargo.toml": "[package]\nname = \"native\"\nversion = \"0.1.0\"\n",
+                },
+            }),
+        )
+        .await;
+
+        let projects = detected_build_projects(&panel, cx);
+        let systems = projects
+            .iter()
+            .map(|project| project.system)
+            .collect::<Vec<_>>();
+        assert!(
+            systems.contains(&build_commands::BuildSystem::Node),
+            "expected a Node project in {systems:?}"
+        );
+        assert!(systems.contains(&build_commands::BuildSystem::Maven));
+        assert!(systems.contains(&build_commands::BuildSystem::Go));
+        assert!(systems.contains(&build_commands::BuildSystem::Dotnet));
+        assert!(systems.contains(&build_commands::BuildSystem::Cargo));
+
+        let node = projects
+            .iter()
+            .find(|project| project.system == build_commands::BuildSystem::Node)
+            .expect("node project");
+        assert_eq!(node.name.as_str(), "web");
+        assert_eq!(
+            node.commands
+                .iter()
+                .map(|command| command.label.to_string())
+                .collect::<Vec<_>>(),
+            vec!["npm run dev".to_string(), "npm run build".to_string()],
+            "scripts should keep their package.json order"
+        );
+    }
+
+    #[gpui::test]
+    async fn build_section_ignores_dependencies_and_solution_covered_projects(
+        cx: &mut TestAppContext,
+    ) {
+        let (_, panel) = build_section_panel(
+            cx,
+            serde_json::json!({
+                "app": {
+                    "package.json": r#"{"name":"app","scripts":{"build":"vite build"}}"#,
+                    "node_modules": {
+                        "left-pad": {
+                            "package.json": r#"{"name":"left-pad","scripts":{"build":"echo"}}"#,
+                        },
+                    },
+                },
+                "dotnet": {
+                    "App.sln": "",
+                    "src": {
+                        "App.csproj": "",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let projects = detected_build_projects(&panel, cx);
+        let names = projects
+            .iter()
+            .map(|project| project.name.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            !names.iter().any(|name| name.contains("left-pad")),
+            "node_modules packages should be skipped, got {names:?}"
+        );
+        assert!(
+            !names.iter().any(|name| name.contains("src")),
+            "a .csproj covered by a sibling .sln should be skipped, got {names:?}"
+        );
+        assert!(
+            names.iter().any(|name| name == "dotnet"),
+            "the solution itself should still be listed, got {names:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn running_a_build_command_schedules_a_task_in_the_command_directory(
+        cx: &mut TestAppContext,
+    ) {
+        let (window_handle, panel) = build_section_panel(
+            cx,
+            serde_json::json!({
+                "web": {
+                    "package.json": r#"{"name":"web","scripts":{"build":"vite build"}}"#,
+                },
+            }),
+        )
+        .await;
+
+        let spawned_labels = Arc::new(std::sync::Mutex::new(Vec::new()));
+        window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, _| {
+                    workspace.set_terminal_provider(RecordingTerminalProvider {
+                        spawned_labels: spawned_labels.clone(),
+                    });
+                });
+            })
+            .expect("failed to install the recording terminal provider");
+
+        let project = detected_build_projects(&panel, cx)
+            .into_iter()
+            .next()
+            .expect("a build project should be detected");
+        let command = project.commands[0].clone();
+        let mut visual_cx = VisualTestContext::from_window(window_handle.into(), cx);
+        visual_cx.update(|window, cx| {
+            panel.update(cx, |panel, cx| {
+                panel.run_build_command(&project, &command, window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let labels = spawned_labels
+            .lock()
+            .expect("spawned label mutex should not be poisoned")
+            .clone();
+        assert_eq!(labels.len(), 1, "expected exactly one spawned task");
+        assert!(
+            labels[0].contains("npm run build"),
+            "expected the npm script label, got {labels:?}"
+        );
+        assert!(
+            labels[0].contains("web"),
+            "the task label must name its project so identical scripts in other \
+             projects get their own terminal tab, got {labels:?}"
+        );
+    }
+
+    #[test]
+    fn build_events_only_rescan_when_a_manifest_could_have_changed() {
+        let known: Vec<Arc<util::rel_path::RelPath>> = vec![Arc::from(
+            util::rel_path::RelPath::unix("web/package.json").unwrap(),
+        )];
+        let change = |path: &str| {
+            project::Event::WorktreeUpdatedEntries(
+                project::WorktreeId::from_usize(1),
+                std::sync::Arc::from(vec![(
+                    std::sync::Arc::from(util::rel_path::RelPath::unix(path).unwrap()),
+                    project::ProjectEntryId::from_usize(1),
+                    project::PathChange::Updated,
+                )]),
+            )
+        };
+
+        assert!(
+            project_event_affects_build_commands(&change("package.json"), &known),
+            "an edited manifest must trigger a rescan"
+        );
+        assert!(
+            project_event_affects_build_commands(&change("web/package.json"), &known),
+            "a nested manifest must trigger a rescan"
+        );
+        assert!(
+            project_event_affects_build_commands(&change("web"), &known),
+            "a directory change could rename a known manifest"
+        );
+        assert!(
+            !project_event_affects_build_commands(&change("src/main.rs"), &known),
+            "ordinary source edits must not re-read every manifest"
+        );
+        assert!(
+            !project_event_affects_build_commands(&project::Event::RefreshCodeLens, &known),
+            "unrelated project activity must not re-read every manifest"
+        );
+        assert!(
+            !project_event_affects_build_commands(
+                &project::Event::ActiveEntryChanged(None),
+                &known
+            ),
+            "switching the active entry cannot change which build commands exist"
         );
     }
 }

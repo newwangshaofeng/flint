@@ -1,6 +1,7 @@
 pub mod agent_release;
 pub mod artifact_cache;
 mod attention_detection;
+mod build_commands;
 mod claude_history;
 mod codex_history;
 pub mod connect_proxy;
