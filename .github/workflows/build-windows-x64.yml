@@ -2,15 +2,18 @@ name: Build Windows x64 Release
 
 on:
   push:
+    branches:
+      - main
     tags:
+      - 'latest'
       - 'v*'
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release Tag name (e.g. v0.11.3-droid.1, leave empty to auto-generate)'
+        description: 'Release Tag name (default: latest)'
         required: false
         type: string
-        default: ''
+        default: 'latest'
       release_title:
         description: 'Release Title (leave empty for default title)'
         required: false
@@ -31,7 +34,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}
   cancel-in-progress: true
 
 env:
@@ -74,20 +77,23 @@ jobs:
           $inputTag = "${{ inputs.release_tag }}".Trim()
           if ($inputTag) {
               $tag = $inputTag
-          } elseif ($env:GITHUB_REF -like "refs/tags/v*") {
+          } elseif ($env:GITHUB_REF -like "refs/tags/*") {
               $tag = $env:GITHUB_REF -replace "refs/tags/", ""
           } else {
-              $dateStr = Get-Date -Format "yyyyMMdd.HHmm"
-              $commit = (git rev-parse --short HEAD).Trim()
-              $tag = "v0.11.3-win64-$dateStr-$commit"
+              $tag = "latest"
           }
 
-          $version = $tag -replace '^v', ''
-          $inputTitle = "${{ inputs.release_title }}".Trim()
-          if ($inputTitle) {
-              $title = $inputTitle
+          if ($tag -eq "latest") {
+              $version = "0.11.3"
+              $title = "Flint Windows x64 (Latest) - with Droid Agent Threads"
           } else {
-              $title = "Flint Windows x64 ($tag) - with Droid Agent Threads"
+              $version = $tag -replace '^v', ''
+              $inputTitle = "${{ inputs.release_title }}".Trim()
+              if ($inputTitle) {
+                  $title = $inputTitle
+              } else {
+                  $title = "Flint Windows x64 ($tag) - with Droid Agent Threads"
+              }
           }
 
           Write-Host "Release Tag: $tag"
@@ -241,7 +247,8 @@ jobs:
           # Check if release already exists using gh cli exit code
           & gh release view "$($env:TAG)" >$null 2>&1
           if ($LASTEXITCODE -eq 0) {
-              Write-Host "Release $($env:TAG) already exists. Uploading/clobbering assets..."
+              Write-Host "Release $($env:TAG) already exists. Updating title/notes and uploading assets..."
+              & gh release edit "$($env:TAG)" --title "$($env:TITLE)" --notes-file "$notesFile"
               & gh release upload "$($env:TAG)" @files --clobber
               if ($LASTEXITCODE -ne 0) {
                   Write-Error "Failed to upload assets to release $($env:TAG)"
