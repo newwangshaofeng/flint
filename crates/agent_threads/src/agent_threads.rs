@@ -37,17 +37,22 @@ use settings::{ExtendingVec, RegisterSetting, Settings};
 use ui::IconName;
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
+#[allow(unused_imports)]
 use agent_release::{
     AgentRelease, AgentReleaseCatalog, AgentSelfUpdatePolicy, CLAUDE_RELEASES, CODEX_RELEASES,
     OPENCODE_RELEASES, PI_RELEASES,
 };
+#[allow(unused_imports)]
 use claude_history::ClaudeHistoryProvider;
+#[allow(unused_imports)]
 use codex_history::CodexHistoryProvider;
 use droid_history::DroidHistoryProvider;
 use history::AgentHistoryProvider;
 pub use history::HistoricalThread;
+#[allow(unused_imports)]
 use opencode_history::OpenCodeHistoryProvider;
 pub use panel::AgentThreadsPanel;
+#[allow(unused_imports)]
 use pi_history::PiHistoryProvider;
 pub use store::{
     AgentThreadStore, AgentThreadStoreEvent, checkpoint_live_agent_threads,
@@ -241,11 +246,6 @@ impl AgentKindDefinition {
 }
 
 pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
-    // Antigravity CLI is intentionally not registered: its supported `/resume`
-    // picker owns cross-project history, while this panel is project-scoped.
-    // Matching the integrations below would require depending on private
-    // SQLite/protobuf formats, and AGY exposes no supported quota API for the
-    // usage header. Reconsider when stable host-integration APIs exist.
     vec![
         AgentKindDefinition {
             id: "droid",
@@ -276,228 +276,6 @@ pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
             // Factory's own endpoints and has no reviewed host set yet, so a
             // tunneled route is not offered for this kind.
             egress_hosts: &[],
-            credential_policy: None,
-            supports_plan_usage: false,
-        },
-        AgentKindDefinition {
-            id: "codex",
-            label: SharedString::new_static("Codex"),
-            icon: IconName::AiOpenAi,
-            default_command: "codex",
-            home_env_var: "CODEX_HOME",
-            home_env_child: None,
-            home_dir_name: ".codex",
-            history_provider: Some(Arc::new(CodexHistoryProvider)),
-            resume_options: vec![ResumeOption {
-                id: "bypass-approvals-and-sandbox",
-                label: SharedString::new_static("Bypass approvals & sandbox"),
-                args: vec!["--dangerously-bypass-approvals-and-sandbox".to_string()],
-            }],
-            // Codex CLI has no flag for assigning a session id to a fresh
-            // session, so fresh Codex threads stay non-restorable.
-            session_id_flag: None,
-            initial_prompt_strategy: InitialPromptStrategy::TrailingPositionalArg,
-            official_source_prefixes: &[
-                "https://github.com/openai/codex/releases/download/",
-                "https://release-assets.githubusercontent.com/",
-            ],
-            releases: CODEX_RELEASES,
-            self_update_policy: AgentSelfUpdatePolicy {
-                environment: &[],
-                arguments: &["--config", "check_for_update_on_startup=false"],
-            },
-            egress_hosts: &["api.openai.com", "auth.openai.com", "chatgpt.com"],
-            credential_policy: Some(AgentCredentialPolicy {
-                login_arguments: &["login", "--device-auth"],
-                status_arguments: &["login", "status"],
-                logout_arguments: &["logout"],
-                provider_management_url: "https://platform.openai.com/api-keys",
-            }),
-            supports_plan_usage: true,
-        },
-        AgentKindDefinition {
-            id: "claude",
-            label: SharedString::new_static("Claude"),
-            icon: IconName::AiClaude,
-            default_command: "claude",
-            home_env_var: "CLAUDE_CONFIG_DIR",
-            home_env_child: None,
-            home_dir_name: ".claude",
-            history_provider: Some(Arc::new(ClaudeHistoryProvider)),
-            resume_options: vec![ResumeOption {
-                id: "skip-permission-prompts",
-                label: SharedString::new_static("Skip permission prompts"),
-                args: vec!["--dangerously-skip-permissions".to_string()],
-            }],
-            session_id_flag: Some("--session-id"),
-            initial_prompt_strategy: InitialPromptStrategy::TrailingPositionalArg,
-            official_source_prefixes: &["https://downloads.claude.ai/claude-code-releases/"],
-            releases: CLAUDE_RELEASES,
-            self_update_policy: AgentSelfUpdatePolicy {
-                environment: &[("DISABLE_UPDATES", "1")],
-                arguments: &[],
-            },
-            egress_hosts: &["api.anthropic.com", "claude.ai", "platform.claude.com"],
-            credential_policy: Some(AgentCredentialPolicy {
-                login_arguments: &["auth", "login"],
-                status_arguments: &["auth", "status"],
-                logout_arguments: &["auth", "logout"],
-                provider_management_url: "https://claude.ai/settings/claude-code",
-            }),
-            supports_plan_usage: true,
-        },
-        AgentKindDefinition {
-            id: "pi",
-            label: SharedString::new_static("Pi"),
-            icon: IconName::AiPi,
-            default_command: "pi",
-            home_env_var: "PI_CODING_AGENT_DIR",
-            home_env_child: None,
-            home_dir_name: ".pi/agent",
-            history_provider: Some(Arc::new(PiHistoryProvider)),
-            resume_options: Vec::new(),
-            session_id_flag: Some("--session-id"),
-            initial_prompt_strategy: InitialPromptStrategy::TrailingPositionalArg,
-            official_source_prefixes: &[
-                "https://github.com/earendil-works/pi/releases/download/",
-                "https://release-assets.githubusercontent.com/",
-            ],
-            releases: PI_RELEASES,
-            self_update_policy: AgentSelfUpdatePolicy {
-                environment: &[("PI_SKIP_VERSION_CHECK", "1"), ("PI_TELEMETRY", "0")],
-                arguments: &[],
-            },
-            egress_hosts: &[
-                "ai-gateway.vercel.sh",
-                "api.ant-ling.com",
-                "api.anthropic.com",
-                "api.cerebras.ai",
-                "api.cloudflare.com",
-                "api.deepseek.com",
-                "api.fireworks.ai",
-                "api.github.com",
-                "api.groq.com",
-                "api.individual.githubcopilot.com",
-                "api.kimi.com",
-                "api.minimax.io",
-                "api.minimaxi.com",
-                "api.mistral.ai",
-                "api.moonshot.ai",
-                "api.moonshot.cn",
-                "api.openai.com",
-                "api.together.ai",
-                "api.x.ai",
-                "api.xiaomimimo.com",
-                "api.z.ai",
-                "auth.openai.com",
-                "auth.x.ai",
-                "chatgpt.com",
-                "claude.ai",
-                "gateway.ai.cloudflare.com",
-                "generativelanguage.googleapis.com",
-                "github.com",
-                "huggingface.co",
-                "integrate.api.nvidia.com",
-                "open.bigmodel.cn",
-                "openrouter.ai",
-                "pi.dev",
-                "platform.claude.com",
-                "radius.pi.dev",
-                "router.huggingface.co",
-                "token-plan-ams.xiaomimimo.com",
-                "token-plan-cn.xiaomimimo.com",
-                "token-plan-sgp.xiaomimimo.com",
-                "token-plan.ap-southeast-1.maas.aliyuncs.com",
-                "token-plan.cn-beijing.maas.aliyuncs.com",
-                "*.amazonaws.com",
-                "*.amazonaws.com.cn",
-                "*.githubcopilot.com",
-                "*.googleapis.com",
-                "*.openai.azure.com",
-                "*.services.ai.azure.com",
-            ],
-            credential_policy: None,
-            supports_plan_usage: false,
-        },
-        AgentKindDefinition {
-            id: "opencode",
-            label: SharedString::new_static("OpenCode"),
-            icon: IconName::AiOpenCode,
-            default_command: "opencode",
-            home_env_var: "XDG_DATA_HOME",
-            home_env_child: Some("opencode"),
-            home_dir_name: ".local/share/opencode",
-            history_provider: Some(Arc::new(OpenCodeHistoryProvider)),
-            resume_options: vec![ResumeOption {
-                id: "auto-approve-permissions",
-                label: SharedString::new_static("Auto-approve permissions"),
-                args: vec!["--auto".to_string()],
-            }],
-            // OpenCode's `--session` flag only resumes an existing session; it
-            // cannot assign the id of a fresh session.
-            session_id_flag: None,
-            initial_prompt_strategy: InitialPromptStrategy::Flag("--prompt"),
-            official_source_prefixes: &[
-                "https://github.com/anomalyco/opencode/releases/download/",
-                "https://release-assets.githubusercontent.com/",
-            ],
-            releases: OPENCODE_RELEASES,
-            self_update_policy: AgentSelfUpdatePolicy {
-                environment: &[("OPENCODE_DISABLE_AUTOUPDATE", "1")],
-                arguments: &[],
-            },
-            egress_hosts: &[
-                "ai-gateway.vercel.sh",
-                "api.ant-ling.com",
-                "api.anthropic.com",
-                "api.cerebras.ai",
-                "api.cloudflare.com",
-                "api.deepseek.com",
-                "api.fireworks.ai",
-                "api.github.com",
-                "api.groq.com",
-                "api.individual.githubcopilot.com",
-                "api.kimi.com",
-                "api.minimax.io",
-                "api.minimaxi.com",
-                "api.mistral.ai",
-                "api.moonshot.ai",
-                "api.moonshot.cn",
-                "api.openai.com",
-                "api.opencode.ai",
-                "api.together.ai",
-                "api.x.ai",
-                "api.xiaomimimo.com",
-                "api.z.ai",
-                "auth.openai.com",
-                "auth.x.ai",
-                "chatgpt.com",
-                "claude.ai",
-                "gateway.ai.cloudflare.com",
-                "generativelanguage.googleapis.com",
-                "github.com",
-                "huggingface.co",
-                "integrate.api.nvidia.com",
-                "models.dev",
-                "open.bigmodel.cn",
-                "opencode.ai",
-                "openrouter.ai",
-                "platform.claude.com",
-                "router.huggingface.co",
-                "token-plan-ams.xiaomimimo.com",
-                "token-plan-cn.xiaomimimo.com",
-                "token-plan-sgp.xiaomimimo.com",
-                "token-plan.ap-southeast-1.maas.aliyuncs.com",
-                "token-plan.cn-beijing.maas.aliyuncs.com",
-                "*.amazonaws.com",
-                "*.amazonaws.com.cn",
-                "*.githubcopilot.com",
-                "*.googleapis.com",
-                "*.openai.azure.com",
-                "*.services.ai.azure.com",
-            ],
-            // OpenCode manages credentials for many providers interactively,
-            // so there is no single non-interactive logout or provider page.
             credential_policy: None,
             supports_plan_usage: false,
         },
@@ -1234,13 +1012,13 @@ mod tests {
     }
 
     #[test]
-    fn registry_orders_droid_first_and_keeps_existing_agents() {
+    fn registry_contains_droid_only() {
         assert_eq!(
             agent_kind_registry()
                 .into_iter()
                 .map(|kind| kind.id)
                 .collect::<Vec<_>>(),
-            ["droid", "codex", "claude", "pi", "opencode"]
+            ["droid"]
         );
     }
 

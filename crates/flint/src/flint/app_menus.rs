@@ -89,22 +89,6 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             menu_text(cx, "menu-new-droid-thread"),
             agent_threads::NewDroidThread,
         ),
-        MenuItem::action(
-            menu_text(cx, "menu-new-codex-thread"),
-            agent_threads::NewCodexThread,
-        ),
-        MenuItem::action(
-            menu_text(cx, "menu-new-claude-thread"),
-            agent_threads::NewClaudeThread,
-        ),
-        MenuItem::action(
-            menu_text(cx, "menu-new-pi-thread"),
-            agent_threads::NewPiThread,
-        ),
-        MenuItem::action(
-            menu_text(cx, "menu-new-opencode-thread"),
-            agent_threads::NewOpenCodeThread,
-        ),
         MenuItem::separator(),
         MenuItem::action(menu_text(cx, "menu-diagnostics"), diagnostics::Deploy),
         MenuItem::separator(),
