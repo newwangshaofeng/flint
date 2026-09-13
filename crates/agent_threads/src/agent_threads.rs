@@ -246,40 +246,38 @@ impl AgentKindDefinition {
 }
 
 pub fn agent_kind_registry() -> Vec<AgentKindDefinition> {
-    vec![
-        AgentKindDefinition {
-            id: "droid",
-            label: SharedString::new_static("Droid"),
-            icon: IconName::AiDroid,
-            default_command: "droid",
-            // Droid resolves `~/.factory` from `FACTORY_HOME_OVERRIDE` when it
-            // is set, and from the platform home directory otherwise.
-            home_env_var: "FACTORY_HOME_OVERRIDE",
-            home_env_child: Some(".factory"),
-            home_dir_name: ".factory",
-            history_provider: Some(Arc::new(DroidHistoryProvider)),
-            resume_options: Vec::new(),
-            // Droid's interactive CLI has no flag for assigning a session id to
-            // a fresh session, so fresh Droid threads are bound to the id their
-            // own session file reports (see `store::session_discovery_candidates`).
-            session_id_flag: None,
-            initial_prompt_strategy: InitialPromptStrategy::TrailingPositionalArg,
-            // No pinned standalone releases: managed provisioning for tunneled
-            // remote projects is not supported for Droid yet.
-            official_source_prefixes: &[],
-            releases: &[],
-            self_update_policy: AgentSelfUpdatePolicy {
-                environment: &[("FACTORY_DROID_AUTO_UPDATE_ENABLED", "false")],
-                arguments: &[],
-            },
-            // No tunneled egress allowlist: Droid authenticates against
-            // Factory's own endpoints and has no reviewed host set yet, so a
-            // tunneled route is not offered for this kind.
-            egress_hosts: &[],
-            credential_policy: None,
-            supports_plan_usage: false,
+    vec![AgentKindDefinition {
+        id: "droid",
+        label: SharedString::new_static("Droid"),
+        icon: IconName::AiDroid,
+        default_command: "droid",
+        // Droid resolves `~/.factory` from `FACTORY_HOME_OVERRIDE` when it
+        // is set, and from the platform home directory otherwise.
+        home_env_var: "FACTORY_HOME_OVERRIDE",
+        home_env_child: Some(".factory"),
+        home_dir_name: ".factory",
+        history_provider: Some(Arc::new(DroidHistoryProvider)),
+        resume_options: Vec::new(),
+        // Droid's interactive CLI has no flag for assigning a session id to
+        // a fresh session, so fresh Droid threads are bound to the id their
+        // own session file reports (see `store::session_discovery_candidates`).
+        session_id_flag: None,
+        initial_prompt_strategy: InitialPromptStrategy::TrailingPositionalArg,
+        // No pinned standalone releases: managed provisioning for tunneled
+        // remote projects is not supported for Droid yet.
+        official_source_prefixes: &[],
+        releases: &[],
+        self_update_policy: AgentSelfUpdatePolicy {
+            environment: &[("FACTORY_DROID_AUTO_UPDATE_ENABLED", "false")],
+            arguments: &[],
         },
-    ]
+        // No tunneled egress allowlist: Droid authenticates against
+        // Factory's own endpoints and has no reviewed host set yet, so a
+        // tunneled route is not offered for this kind.
+        egress_hosts: &[],
+        credential_policy: None,
+        supports_plan_usage: false,
+    }]
 }
 
 #[derive(Clone, Debug, RegisterSetting)]
@@ -1041,12 +1039,15 @@ mod tests {
         );
         assert!(droid.credential_policy().is_none());
         assert!(!droid.supports_plan_usage());
-        assert!(droid.release_for(remote::RemotePlatform {
-            os: remote::RemoteOs::Linux,
-            arch: remote::RemoteArch::X86_64,
-            libc: None,
-        })
-        .is_none());
+        assert!(
+            droid
+                .release_for(remote::RemotePlatform {
+                    os: remote::RemoteOs::Linux,
+                    arch: remote::RemoteArch::X86_64,
+                    libc: None,
+                })
+                .is_none()
+        );
         assert_eq!(
             droid.self_update_policy().environment,
             [("FACTORY_DROID_AUTO_UPDATE_ENABLED", "false")]
@@ -1070,7 +1071,10 @@ mod tests {
         let command = provider.resume_command(&AgentLaunchCommand::default(), &thread, &[]);
 
         assert_eq!(command.args, ["--resume", "session-a"]);
-        assert_eq!(command.cwd.as_deref(), Some(std::path::Path::new("/work/project")));
+        assert_eq!(
+            command.cwd.as_deref(),
+            Some(std::path::Path::new("/work/project"))
+        );
     }
 
     #[test]

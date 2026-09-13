@@ -113,10 +113,9 @@ impl HistoryKind {
     fn dedup_by_session(self) -> bool {
         match self {
             HistoryKind::Codex => false,
-            HistoryKind::Claude
-            | HistoryKind::Pi
-            | HistoryKind::OpenCode
-            | HistoryKind::Droid => true,
+            HistoryKind::Claude | HistoryKind::Pi | HistoryKind::OpenCode | HistoryKind::Droid => {
+                true
+            }
         }
     }
 }

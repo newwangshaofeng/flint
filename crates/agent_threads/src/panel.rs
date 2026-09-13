@@ -13,8 +13,8 @@ use gpui::{
 };
 use settings::{DockSide, Settings, SettingsStore};
 use ui::{
-    Color, CommonAnimationExt, ContextMenu, Disclosure, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
-    LabelSize, Tooltip, prelude::*,
+    Color, CommonAnimationExt, ContextMenu, Disclosure, Icon, IconButton, IconButtonShape,
+    IconName, IconSize, Label, LabelSize, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::paths::PathStyle;
@@ -1417,20 +1417,20 @@ impl AgentThreadsPanel {
         let workspace = self.workspace.clone();
         let store = self.store.clone();
         let panel_weak = cx.entity().downgrade();
-        let session_id_clone = session_id.clone();
         let live_item_id = live_terminal_item_id;
         // Archiving renames a file under the *local* `~/.factory/sessions`, so
         // it is only meaningful for a local project; a remote project's
-        // sessions live on its host.
-        let archivable = !self.remote_project;
+        // sessions live on its host. It also needs a session id to name that
+        // file by, which a live thread started fresh only gets once session
+        // discovery attaches one.
+        let archivable_session_id = if self.remote_project {
+            None
+        } else {
+            session_id
+        };
 
         let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _cx| {
-            // Archiving renames a session's `.jsonl`, so it is only offered when
-            // there is a session id to name that file by. A live thread started
-            // fresh gets one once session discovery attaches it.
-            if archivable
-                && let Some(session_id) = session_id_clone.clone()
-            {
+            if let Some(session_id) = archivable_session_id {
                 let archive_workspace = workspace.clone();
                 let archive_store = store.clone();
                 let archive_panel = panel_weak.clone();
@@ -1486,7 +1486,6 @@ impl AgentThreadsPanel {
 
             if let Some(terminal_item_id) = live_item_id {
                 let close_workspace = workspace.clone();
-                let close_store = store.clone();
                 context_menu = context_menu.entry("关闭终端", None, move |window, cx| {
                     let Some(workspace) = close_workspace.upgrade() else {
                         return;
@@ -1494,7 +1493,7 @@ impl AgentThreadsPanel {
                     // The shutdown task must be detached: dropping it would
                     // cancel the teardown it just started.
                     if let Some(shutdown) =
-                        close_store.update(cx, |store, cx| store.begin_shutdown(terminal_item_id, cx))
+                        store.update(cx, |store, cx| store.begin_shutdown(terminal_item_id, cx))
                     {
                         shutdown.detach_and_log_err(cx);
                     }

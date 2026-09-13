@@ -93,16 +93,15 @@ impl HistoryProvider for DroidHistoryProvider {
             // A session that never recorded a message has no timestamp of its
             // own; its file mtime is when it started, which keeps a brand-new
             // session visible (and discoverable by a live thread) immediately.
-            let (last_activity_secs, last_activity_nanos) = if summary.last_activity_secs == 0
-                && summary.last_activity_nanos == 0
-            {
-                (
-                    entry.identity.modified_at_secs,
-                    entry.identity.modified_at_nanos,
-                )
-            } else {
-                (summary.last_activity_secs, summary.last_activity_nanos)
-            };
+            let (last_activity_secs, last_activity_nanos) =
+                if summary.last_activity_secs == 0 && summary.last_activity_nanos == 0 {
+                    (
+                        entry.identity.modified_at_secs,
+                        entry.identity.modified_at_nanos,
+                    )
+                } else {
+                    (summary.last_activity_secs, summary.last_activity_nanos)
+                };
             sessions.push(IndexedSession {
                 session_id: summary.session_id.clone(),
                 resolved_title: summary.title.clone(),
@@ -171,7 +170,10 @@ fn parse_session_summary(content: &str) -> Option<DroidSummary> {
                     .filter(|id| !id.is_empty())
                     .map(str::to_string);
                 project_root = entry.get("cwd").and_then(Value::as_str).map(str::to_string);
-                header_title = entry.get("title").and_then(Value::as_str).map(str::to_string);
+                header_title = entry
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
             }
             Some("message") if first_user_message.is_none() => {
                 first_user_message = user_message_title(&entry);
@@ -657,8 +659,18 @@ mod tests {
         let content = [
             session_start("s", "Title", "/work/project"),
             user_message("u1", None, "2026-09-12T08:00:00.000Z", "the real question"),
-            assistant_message("a1", Some("u1"), "2026-09-12T08:00:01.000Z", "abandoned answer"),
-            assistant_message("a2", Some("u1"), "2026-09-12T08:00:02.000Z", "the kept answer"),
+            assistant_message(
+                "a1",
+                Some("u1"),
+                "2026-09-12T08:00:01.000Z",
+                "abandoned answer",
+            ),
+            assistant_message(
+                "a2",
+                Some("u1"),
+                "2026-09-12T08:00:02.000Z",
+                "the kept answer",
+            ),
         ]
         .join("\n");
 
@@ -773,10 +785,7 @@ mod tests {
         assert_eq!(classified.malformed_count, 1);
         assert_eq!(
             classified.events,
-            vec![
-                RawEvent::Noise,
-                RawEvent::User("keep me".to_string()),
-            ]
+            vec![RawEvent::Noise, RawEvent::User("keep me".to_string()),]
         );
     }
 }

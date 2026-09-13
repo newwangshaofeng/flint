@@ -38,9 +38,12 @@ mod tests {
         let base = AgentLaunchCommand {
             command: Some("custom-droid".to_string()),
             args: vec!["--new-only".to_string()],
-            env: [("FACTORY_HOME_OVERRIDE".to_string(), "/factory-home".to_string())]
-                .into_iter()
-                .collect(),
+            env: [(
+                "FACTORY_HOME_OVERRIDE".to_string(),
+                "/factory-home".to_string(),
+            )]
+            .into_iter()
+            .collect(),
             initialization_command: Some("source ~/.profile".to_string()),
             hidden: true,
             ..Default::default()
@@ -62,10 +65,7 @@ mod tests {
         assert_eq!(command.args, ["--resume", "session-a", "--auto", "high"]);
         assert_eq!(command.cwd.as_deref(), Some(Path::new("/root")));
         assert_eq!(
-            command
-                .env
-                .get("FACTORY_HOME_OVERRIDE")
-                .map(String::as_str),
+            command.env.get("FACTORY_HOME_OVERRIDE").map(String::as_str),
             Some("/factory-home")
         );
         assert_eq!(
