@@ -353,6 +353,11 @@ reason = "Developer-only assertion message"
 
 [[allowlist]]
 file = "crates/agent_threads/src/agent_threads.rs"
+text = "Droid"
+reason = "Proper product name"
+
+[[allowlist]]
+file = "crates/agent_threads/src/agent_threads.rs"
 text = "Codex"
 reason = "Proper product name"
 
