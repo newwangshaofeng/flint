@@ -1,6 +1,9 @@
 use crate::AgentLaunchCommand;
 use crate::history::{AgentHistoryProvider, HistoricalThread};
 
+/// Kept landed but unregistered: the Droid-only panel no longer offers Codex
+/// threads, so nothing constructs this provider.
+#[allow(dead_code)]
 pub struct CodexHistoryProvider;
 
 impl AgentHistoryProvider for CodexHistoryProvider {

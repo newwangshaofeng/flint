@@ -19,7 +19,7 @@ use ui::{
 use util::ResultExt as _;
 use util::paths::PathStyle;
 use workspace::{
-    MultiWorkspace, Toast, Workspace,
+    MultiWorkspace, SaveIntent, Toast, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::NotificationId,
 };
@@ -987,6 +987,9 @@ impl AgentThreadsPanel {
             .collect()
     }
 
+    /// Target kinds for the handoff menu, every registered kind but the source.
+    /// Only used by `deploy_handoff_menu`; see its note on why it's unwired.
+    #[allow(dead_code)]
     fn handoff_targets(&self, source_kind_id: &str, cx: &App) -> Vec<AgentKindDefinition> {
         self.visible_registry(cx)
             .into_iter()
@@ -1416,68 +1419,86 @@ impl AgentThreadsPanel {
         let panel_weak = cx.entity().downgrade();
         let session_id_clone = session_id.clone();
         let live_item_id = live_terminal_item_id;
+        // Archiving renames a file under the *local* `~/.factory/sessions`, so
+        // it is only meaningful for a local project; a remote project's
+        // sessions live on its host.
+        let archivable = !self.remote_project;
 
-        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, cx| {
-            let workspace = workspace.clone();
-            let store = store.clone();
-            let panel_weak = panel_weak.clone();
-            let session_id = session_id_clone.clone();
-
-            context_menu = context_menu.entry("归档会话", None, move |window, cx| {
-                if let Some(terminal_item_id) = live_item_id {
-                    let Some(workspace) = workspace.upgrade() else {
+        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, _cx| {
+            // Archiving renames a session's `.jsonl`, so it is only offered when
+            // there is a session id to name that file by. A live thread started
+            // fresh gets one once session discovery attaches it.
+            if archivable
+                && let Some(session_id) = session_id_clone.clone()
+            {
+                let archive_workspace = workspace.clone();
+                let archive_store = store.clone();
+                let archive_panel = panel_weak.clone();
+                context_menu = context_menu.entry("归档会话", None, move |window, cx| {
+                    let Some(workspace) = archive_workspace.upgrade() else {
                         return;
                     };
-                    store.update(cx, |store, cx| {
-                        store.begin_shutdown(terminal_item_id, cx);
+                    // A live CLI keeps its session file open, and Windows refuses
+                    // to rename a file an open process still holds, so the
+                    // terminal is shut down first and the archive waits for the
+                    // shutdown task.
+                    let shutdown = live_item_id.and_then(|terminal_item_id| {
+                        let shutdown = archive_store
+                            .update(cx, |store, cx| store.begin_shutdown(terminal_item_id, cx));
+                        close_thread_terminal(&workspace, terminal_item_id, window, cx);
+                        shutdown
                     });
-                    workspace.update(cx, |workspace, cx| {
-                        if let Some(pane) = workspace.pane_for_item_id(terminal_item_id) {
-                            pane.update(cx, |pane, cx| {
-                                pane.close_item_by_id(terminal_item_id, workspace::SaveIntent::Skip, cx);
+
+                    let sid_str = session_id.to_string();
+                    let panel_weak = archive_panel.clone();
+                    let workspace_weak = workspace.downgrade();
+                    cx.spawn(async move |cx| {
+                        if let Some(shutdown) = shutdown {
+                            shutdown.await.log_err();
+                        }
+                        cx.background_spawn(async move {
+                            archive_droid_session_file(&sid_str);
+                        })
+                        .await;
+                        if let Some(panel) = panel_weak.upgrade() {
+                            panel.update(cx, |panel, cx| {
+                                panel.refresh_history_kind("droid", None, cx);
                             });
                         }
-                    });
-                }
-                if let Some(ref sid) = session_id {
-                    let sid_str = sid.to_string();
-                    cx.background_spawn(async move {
-                        archive_droid_session_file(&sid_str);
+                        if let Some(workspace) = workspace_weak.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::named(
+                                            "agent-threads-session-archived".into(),
+                                        ),
+                                        "已归档会话",
+                                    )
+                                    .autohide(),
+                                    cx,
+                                );
+                            });
+                        }
                     })
                     .detach();
-                }
-                if let Some(panel) = panel_weak.upgrade() {
-                    panel.update(cx, |this, cx| {
-                        this.sync_history("droid", Some(Duration::from_millis(150)), cx);
-                    });
-                }
-                if let Some(workspace) = workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.show_toast(
-                            Toast::new(NotificationId::unique(), "已归档会话"),
-                            cx,
-                        );
-                    });
-                }
-            });
+                });
+            }
 
             if let Some(terminal_item_id) = live_item_id {
-                let workspace = workspace.clone();
-                let store = store.clone();
-                context_menu = context_menu.entry("关闭终端", None, move |_, cx| {
-                    let Some(workspace) = workspace.upgrade() else {
+                let close_workspace = workspace.clone();
+                let close_store = store.clone();
+                context_menu = context_menu.entry("关闭终端", None, move |window, cx| {
+                    let Some(workspace) = close_workspace.upgrade() else {
                         return;
                     };
-                    store.update(cx, |store, cx| {
-                        store.begin_shutdown(terminal_item_id, cx);
-                    });
-                    workspace.update(cx, |workspace, cx| {
-                        if let Some(pane) = workspace.pane_for_item_id(terminal_item_id) {
-                            pane.update(cx, |pane, cx| {
-                                pane.close_item_by_id(terminal_item_id, workspace::SaveIntent::Skip, cx);
-                            });
-                        }
-                    });
+                    // The shutdown task must be detached: dropping it would
+                    // cancel the teardown it just started.
+                    if let Some(shutdown) =
+                        close_store.update(cx, |store, cx| store.begin_shutdown(terminal_item_id, cx))
+                    {
+                        shutdown.detach_and_log_err(cx);
+                    }
+                    close_thread_terminal(&workspace, terminal_item_id, window, cx);
                 });
             }
 
@@ -1488,6 +1509,11 @@ impl AgentThreadsPanel {
 
     /// Deploys the "Hand off to <kind>" menu for a live thread row, offering
     /// every other registered kind as a target.
+    ///
+    /// Kept landed but unwired: the Droid-only panel no longer offers cross-agent
+    /// handoff, so nothing calls this. Re-enabling the feature is a wiring
+    /// change, not a rewrite.
+    #[allow(dead_code)]
     fn deploy_handoff_menu(
         &mut self,
         source_kind: AgentKindDefinition,
@@ -2118,8 +2144,6 @@ impl AgentThreadsPanel {
             SharedString::from(format!("agent-thread-resume-options-{}", thread.session_id));
         let click_kind = kind.clone();
         let click_thread = thread.clone();
-        let menu_kind = kind.clone();
-        let menu_thread = thread.clone();
         let menu_kind_for_button = kind.clone();
         let menu_thread_for_button = thread.clone();
         let is_live = live_terminal_item_id.is_some();
@@ -2260,6 +2284,11 @@ impl AgentThreadsPanel {
 /// Local projects only: the write must happen on the host the target agent
 /// runs on, and remote handoff would need a remote write path this change
 /// doesn't add yet.
+///
+/// Kept landed but unwired: the Droid-only panel no longer offers cross-agent
+/// handoff, so only `deploy_handoff_menu` would call this. Re-enabling the
+/// feature is a wiring change, not a rewrite.
+#[allow(dead_code)]
 fn start_handoff(
     workspace: Entity<Workspace>,
     fs: Arc<dyn Fs>,
@@ -2479,6 +2508,28 @@ fn start_handoff(
         }
     })
     .detach();
+}
+
+/// Closes a live thread's terminal item, which drops the terminal view and the
+/// PTY behind it. The caller shuts the thread's CLI down first:
+/// `AgentThreadStore::begin_shutdown` takes the entry out of the store, so the
+/// pane's own release observer has nothing left to tear down by the time this
+/// closes the item.
+fn close_thread_terminal(
+    workspace: &Entity<Workspace>,
+    terminal_item_id: gpui::EntityId,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(pane) = workspace.read(cx).pane_for_item_id(terminal_item_id) else {
+        return;
+    };
+    pane.update(cx, |pane, cx| {
+        // A terminal has nothing to save, so `Skip` avoids the save path
+        // entirely and just removes the item.
+        pane.close_item_by_id(terminal_item_id, SaveIntent::Skip, window, cx)
+            .detach_and_log_err(cx);
+    });
 }
 
 fn archive_droid_session_file(session_id: &str) {

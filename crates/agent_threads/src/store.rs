@@ -1328,7 +1328,10 @@ impl AgentThreadStore {
         );
     }
 
-    fn begin_shutdown(
+    /// Starts shutting a live thread's CLI down and drops it from the store.
+    /// Returns the shutdown task so callers that must wait for the process to
+    /// exit (e.g. archiving a session file it still holds open) can await it.
+    pub(crate) fn begin_shutdown(
         &mut self,
         terminal_item_id: EntityId,
         cx: &mut Context<Self>,

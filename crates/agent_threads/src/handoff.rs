@@ -4,6 +4,12 @@
 //! thread's extracted transcript excerpt and writes it under
 //! `.flint/handoffs/` on the host where the target agent will run. See
 //! `docs/superpowers/specs/2026-07-25-cross-agent-handoff-design.md`.
+//!
+//! Kept landed but unwired: the Droid-only panel no longer offers cross-agent
+//! handoff, so `start_handoff` is the only caller and it too is unwired.
+//! Re-enabling the feature is a wiring change, not a rewrite.
+
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

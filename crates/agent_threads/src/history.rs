@@ -162,6 +162,9 @@ impl From<agent_history::TranscriptExcerpt> for AgentTranscriptExcerpt {
 /// Extracts a handoff excerpt for a local project directly through the host
 /// index. `Ok(None)` means the transcript was read but nothing trustworthy
 /// survived (the caller must not write a handoff).
+///
+/// Kept landed but unwired: its only caller is the now-unwired `start_handoff`.
+#[allow(dead_code)]
 pub(crate) async fn local_extract_transcript(
     service: agent_history::IndexService,
     kind: agent_history::HistoryKind,
