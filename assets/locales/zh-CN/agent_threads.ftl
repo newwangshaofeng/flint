@@ -73,3 +73,7 @@ agent-threads-control-skills-all-title = 所有受支持智能体的 Flint 控�
 agent-threads-build-title = 构建
 agent-threads-build-scanning = 正在扫描构建项目…
 agent-threads-build-run-tooltip = 运行
+agent-threads-build-more-tooltip = 更多构建选项
+agent-threads-build-collapse-all = 全部折叠
+agent-threads-build-expand-all = 全部展开
+agent-threads-build-refresh = 刷新

@@ -42,8 +42,57 @@ pub enum BuildSystem {
     Cargo,
 }
 
+/// The category of a build action, which determines its icon and color.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildActionKind {
+    Run,
+    Build,
+    Compile,
+    Package,
+    Preview,
+    Install,
+    Restore,
+    Test,
+    Lint,
+}
+
+/// Supported package managers for JavaScript/TypeScript projects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PackageManager {
+    Npm,
+    Pnpm,
+    Yarn,
+    Bun,
+}
+
+impl PackageManager {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Npm => "npm",
+            Self::Pnpm => "pnpm",
+            Self::Yarn => "yarn",
+            Self::Bun => "bun",
+        }
+    }
+}
+
+pub fn detect_package_manager(directory: &Path, root: &Path) -> PackageManager {
+    for dir in [directory, root] {
+        if dir.join("pnpm-lock.yaml").exists() {
+            return PackageManager::Pnpm;
+        }
+        if dir.join("yarn.lock").exists() {
+            return PackageManager::Yarn;
+        }
+        if dir.join("bun.lockb").exists() || dir.join("bun.lock").exists() {
+            return PackageManager::Bun;
+        }
+    }
+    PackageManager::Npm
+}
+
 impl BuildSystem {
-    /// The system that owns `file_name`, if any. `sln` and `csproj` are
+    /// The system that owns `file_name`, if any. `sln`, `slnx`, and `csproj` are
     /// matched by extension because their stems are project names.
     pub fn from_manifest_file_name(file_name: &str) -> Option<Self> {
         if file_name.eq_ignore_ascii_case("package.json") {
@@ -59,7 +108,10 @@ impl BuildSystem {
             return Some(Self::Cargo);
         }
         let extension = Path::new(file_name).extension()?.to_str()?;
-        if extension.eq_ignore_ascii_case("sln") || extension.eq_ignore_ascii_case("csproj") {
+        if extension.eq_ignore_ascii_case("sln")
+            || extension.eq_ignore_ascii_case("slnx")
+            || extension.eq_ignore_ascii_case("csproj")
+        {
             return Some(Self::Dotnet);
         }
         None
@@ -67,6 +119,7 @@ impl BuildSystem {
 
     /// The label shown for a project node when the manifest itself carries
     /// no name.
+    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
         match self {
             Self::Node => "npm",
@@ -81,8 +134,14 @@ impl BuildSystem {
 /// One runnable command derived from a manifest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BuildCommand {
-    /// Human readable label, e.g. `npm run dev`.
+    /// Action primary name, e.g. "dev", "clean package", "Build".
+    pub name: SharedString,
+    /// Subtitle showing the underlying command, e.g. "npm run dev / vite", "mvn clean package -DskipTests".
+    pub subtitle: Option<SharedString>,
+    /// Human readable label, e.g. `npm run dev` or `dotnet build App.sln`.
     pub label: SharedString,
+    /// Kind of build action, which determines its icon and color.
+    pub kind: BuildActionKind,
     /// Executable to spawn.
     pub program: String,
     /// Arguments to the executable.
@@ -92,6 +151,26 @@ pub struct BuildCommand {
 }
 
 impl BuildCommand {
+    pub fn new(
+        name: impl Into<SharedString>,
+        subtitle: Option<impl Into<SharedString>>,
+        label: impl Into<SharedString>,
+        kind: BuildActionKind,
+        program: impl Into<String>,
+        args: &[&str],
+        directory: &Path,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            subtitle: subtitle.map(Into::into),
+            label: label.into(),
+            kind,
+            program: program.into(),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+            cwd: directory.to_path_buf(),
+        }
+    }
+
     /// Builds the task template used to spawn this command.
     ///
     /// `project_label` is folded into the task label because the terminal
@@ -113,8 +192,10 @@ impl BuildCommand {
 pub struct BuildProject {
     pub system: BuildSystem,
     /// Display name, from the manifest when it carries one, else the
-    /// containing directory.
+    /// containing directory or file name.
     pub name: SharedString,
+    /// Suffix for the manifest path, e.g. Some("(src/pom.xml)") or Some("(package.json)").
+    pub manifest_suffix: Option<SharedString>,
     /// Absolute path of the worktree root this project belongs to.
     pub root: PathBuf,
     /// Absolute path of the directory containing the manifest.
@@ -172,10 +253,9 @@ impl ManifestCandidate {
 
     fn is_solution(&self) -> bool {
         self.system == BuildSystem::Dotnet
-            && self
-                .relative_path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("sln"))
+            && self.relative_path.extension().is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("sln") || extension.eq_ignore_ascii_case("slnx")
+            })
     }
 }
 
@@ -213,6 +293,7 @@ pub fn collect_candidates(project: &Project, cx: &App) -> Vec<ManifestCandidate>
         }
     }
 
+    let has_solutions = candidates.iter().any(|candidate| candidate.is_solution());
     let solution_directories: Vec<Arc<RelPath>> = candidates
         .iter()
         .filter(|candidate| candidate.is_solution())
@@ -221,6 +302,9 @@ pub fn collect_candidates(project: &Project, cx: &App) -> Vec<ManifestCandidate>
     candidates.retain(|candidate| {
         if candidate.system != BuildSystem::Dotnet || candidate.is_solution() {
             return true;
+        }
+        if has_solutions {
+            return false;
         }
         let parent = parent_or_root(&candidate.relative_path);
         !solution_directories
@@ -267,23 +351,68 @@ pub struct ParsedManifest {
 pub fn build_project(candidate: &ManifestCandidate, contents: &str) -> Option<BuildProject> {
     let file_name = candidate.relative_path.file_name()?;
     let directory = candidate.directory();
-    let parsed = parse_manifest(candidate.system, contents, &directory, file_name);
+    let pm = detect_package_manager(&directory, &candidate.root);
+    let parsed = parse_manifest(candidate.system, contents, &directory, file_name, pm);
     if parsed.commands.is_empty() {
         return None;
     }
-    let name = parsed
-        .name
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or_else(|| directory_label(&candidate.relative_path, &candidate.root_name));
+    let (name, manifest_suffix) = manifest_display_info(
+        candidate.system,
+        &candidate.relative_path,
+        parsed.name,
+        &candidate.root_name,
+    );
     Some(BuildProject {
         system: candidate.system,
-        name: name.into(),
+        name,
+        manifest_suffix,
         root: candidate.root.clone(),
         directory,
         manifest_path: candidate.absolute_path(),
         relative_manifest_path: candidate.relative_path.clone(),
         commands: parsed.commands,
     })
+}
+
+fn manifest_display_info(
+    system: BuildSystem,
+    relative_path: &RelPath,
+    parsed_name: Option<String>,
+    root_name: &str,
+) -> (SharedString, Option<SharedString>) {
+    let file_name = relative_path.file_name().unwrap_or("");
+    let rel_str = relative_path.as_unix_str();
+    match system {
+        BuildSystem::Dotnet => {
+            let name = file_name.to_string();
+            let suffix = relative_path
+                .parent()
+                .filter(|p| !p.is_empty())
+                .map(|p| format!("({})", p.as_unix_str()));
+            (name.into(), suffix.map(Into::into))
+        }
+        BuildSystem::Node => {
+            let name = parsed_name
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| directory_label(relative_path, root_name));
+            let suffix = format!("({rel_str})");
+            (name.into(), Some(suffix.into()))
+        }
+        BuildSystem::Maven => {
+            let name = parsed_name
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| directory_label(relative_path, root_name));
+            let suffix = format!("({rel_str})");
+            (name.into(), Some(suffix.into()))
+        }
+        BuildSystem::Go | BuildSystem::Cargo => {
+            let name = parsed_name
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| directory_label(relative_path, root_name));
+            let suffix = format!("({rel_str})");
+            (name.into(), Some(suffix.into()))
+        }
+    }
 }
 
 /// The display name for a project whose manifest declares none: the path
@@ -324,9 +453,10 @@ pub fn parse_manifest(
     contents: &str,
     directory: &Path,
     manifest_file_name: &str,
+    package_manager: PackageManager,
 ) -> ParsedManifest {
     match system {
-        BuildSystem::Node => parse_node(contents, directory),
+        BuildSystem::Node => parse_node(contents, directory, package_manager),
         BuildSystem::Maven => parse_maven(contents, directory),
         BuildSystem::Go => parse_go(contents, directory),
         BuildSystem::Dotnet => parse_dotnet(directory, manifest_file_name),
@@ -334,16 +464,7 @@ pub fn parse_manifest(
     }
 }
 
-fn command(label: String, program: &str, args: &[&str], directory: &Path) -> BuildCommand {
-    BuildCommand {
-        label: label.into(),
-        program: program.to_string(),
-        args: args.iter().map(|arg| arg.to_string()).collect(),
-        cwd: directory.to_path_buf(),
-    }
-}
-
-fn parse_node(contents: &str, directory: &Path) -> ParsedManifest {
+fn parse_node(contents: &str, directory: &Path, package_manager: PackageManager) -> ParsedManifest {
     let mut parsed = ParsedManifest::default();
     let Ok(json) = serde_json::from_str::<serde_json::Value>(contents) else {
         return parsed;
@@ -352,36 +473,60 @@ fn parse_node(contents: &str, directory: &Path) -> ParsedManifest {
         .get("name")
         .and_then(|name| name.as_str())
         .map(str::to_string);
+    let pm_str = package_manager.as_str();
+    let mut has_install = false;
     if let Some(scripts) = json.get("scripts").and_then(|scripts| scripts.as_object()) {
         for (script_name, script) in scripts {
-            // `serde_json` preserves object order, so scripts keep the order
-            // they were written in rather than being sorted.
             if !script.is_string() {
                 continue;
             }
-            parsed.commands.push(command(
-                format!("npm run {script_name}"),
-                "npm",
+            if script_name == "install" {
+                has_install = true;
+            }
+            let script_val = script.as_str().unwrap_or("");
+            let kind = match script_name.as_str() {
+                "dev" | "start" | "serve" => BuildActionKind::Run,
+                "build" => BuildActionKind::Build,
+                "preview" => BuildActionKind::Preview,
+                s if s.contains("test") => BuildActionKind::Test,
+                s if s.contains("lint") || s.contains("check") => BuildActionKind::Lint,
+                _ => BuildActionKind::Run,
+            };
+            let subtitle = if !script_val.trim().is_empty() && script_val.trim() != script_name {
+                let trimmed = script_val.trim();
+                let display_script = if trimmed.len() > 40 {
+                    format!("{}…", &trimmed[..38])
+                } else {
+                    trimmed.to_string()
+                };
+                format!("{pm_str} run {script_name} / {display_script}")
+            } else {
+                format!("{pm_str} run {script_name}")
+            };
+            parsed.commands.push(BuildCommand::new(
+                script_name.as_str(),
+                Some(subtitle),
+                format!("{pm_str} run {script_name}"),
+                kind,
+                pm_str,
                 &["run", script_name],
                 directory,
             ));
         }
     }
-    if parsed.commands.is_empty() {
-        parsed.commands.push(command(
-            "npm install".to_string(),
-            "npm",
+    if !has_install {
+        parsed.commands.push(BuildCommand::new(
+            "install",
+            Some(format!("{pm_str} install")),
+            format!("{pm_str} install"),
+            BuildActionKind::Install,
+            pm_str,
             &["install"],
             directory,
         ));
     }
     parsed
 }
-
-/// The standard Maven lifecycle, in the order Maven defines it.
-const MAVEN_LIFECYCLE: &[&str] = &[
-    "clean", "validate", "compile", "test", "package", "verify", "install", "deploy",
-];
 
 static MAVEN_ARTIFACT_ID: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"<artifactId>\s*([^<\s]+)\s*</artifactId>").expect("valid regex"));
@@ -392,21 +537,46 @@ fn parse_maven(contents: &str, directory: &Path) -> ParsedManifest {
         .captures(contents)
         .and_then(|captures| captures.get(1))
         .map(|artifact_id| artifact_id.as_str().to_string());
-    parsed.commands = MAVEN_LIFECYCLE
-        .iter()
-        .map(|phase| command(format!("mvn {phase}"), "mvn", &[phase], directory))
-        .collect();
+    parsed.commands = vec![
+        BuildCommand::new(
+            "clean compile",
+            Some("mvn clean compile"),
+            "mvn clean compile",
+            BuildActionKind::Compile,
+            "mvn",
+            &["clean", "compile"],
+            directory,
+        ),
+        BuildCommand::new(
+            "clean package",
+            Some("mvn clean package -DskipTests"),
+            "mvn clean package",
+            BuildActionKind::Package,
+            "mvn",
+            &["clean", "package", "-DskipTests"],
+            directory,
+        ),
+        BuildCommand::new(
+            "clean install",
+            Some("mvn clean install"),
+            "mvn clean install",
+            BuildActionKind::Install,
+            "mvn",
+            &["clean", "install"],
+            directory,
+        ),
+        BuildCommand::new(
+            "test",
+            Some("mvn test"),
+            "mvn test",
+            BuildActionKind::Test,
+            "mvn",
+            &["test"],
+            directory,
+        ),
+    ];
     parsed
 }
-
-/// The Go commands worth a shortcut. `./...` covers every package in the
-/// module so a multi-package module needs no per-package entries.
-const GO_COMMANDS: &[(&str, &[&str])] = &[
-    ("build", &["build", "./..."]),
-    ("test", &["test", "./..."]),
-    ("vet", &["vet", "./..."]),
-    ("fmt", &["fmt", "./..."]),
-];
 
 fn parse_go(contents: &str, directory: &Path) -> ParsedManifest {
     let mut parsed = ParsedManifest::default();
@@ -417,21 +587,46 @@ fn parse_go(contents: &str, directory: &Path) -> ParsedManifest {
             .filter(|module| !module.is_empty())
             .map(str::to_string)
     });
-    parsed.commands = GO_COMMANDS
-        .iter()
-        .map(|(name, args)| command(format!("go {name}"), "go", args, directory))
-        .collect();
+    parsed.commands = vec![
+        BuildCommand::new(
+            "build",
+            Some("go build ./..."),
+            "go build ./...",
+            BuildActionKind::Build,
+            "go",
+            &["build", "./..."],
+            directory,
+        ),
+        BuildCommand::new(
+            "test",
+            Some("go test ./..."),
+            "go test ./...",
+            BuildActionKind::Test,
+            "go",
+            &["test", "./..."],
+            directory,
+        ),
+        BuildCommand::new(
+            "vet",
+            Some("go vet ./..."),
+            "go vet ./...",
+            BuildActionKind::Lint,
+            "go",
+            &["vet", "./..."],
+            directory,
+        ),
+        BuildCommand::new(
+            "fmt",
+            Some("go fmt ./..."),
+            "go fmt ./...",
+            BuildActionKind::Lint,
+            "go",
+            &["fmt", "./..."],
+            directory,
+        ),
+    ];
     parsed
 }
-
-const CARGO_COMMANDS: &[(&str, &[&str])] = &[
-    ("build", &["build"]),
-    ("run", &["run"]),
-    ("test", &["test"]),
-    ("check", &["check"]),
-    ("clippy", &["clippy"]),
-    ("fmt", &["fmt"]),
-];
 
 fn parse_cargo(contents: &str, directory: &Path) -> ParsedManifest {
     let mut parsed = ParsedManifest::default();
@@ -444,39 +639,103 @@ fn parse_cargo(contents: &str, directory: &Path) -> ParsedManifest {
                 .as_str()
                 .map(str::to_string)
         });
-    parsed.commands = CARGO_COMMANDS
-        .iter()
-        .map(|(name, args)| command(format!("cargo {name}"), "cargo", args, directory))
-        .collect();
+    parsed.commands = vec![
+        BuildCommand::new(
+            "build",
+            Some("cargo build"),
+            "cargo build",
+            BuildActionKind::Build,
+            "cargo",
+            &["build"],
+            directory,
+        ),
+        BuildCommand::new(
+            "run",
+            Some("cargo run"),
+            "cargo run",
+            BuildActionKind::Run,
+            "cargo",
+            &["run"],
+            directory,
+        ),
+        BuildCommand::new(
+            "test",
+            Some("cargo test"),
+            "cargo test",
+            BuildActionKind::Test,
+            "cargo",
+            &["test"],
+            directory,
+        ),
+        BuildCommand::new(
+            "check",
+            Some("cargo check"),
+            "cargo check",
+            BuildActionKind::Lint,
+            "cargo",
+            &["check"],
+            directory,
+        ),
+        BuildCommand::new(
+            "clippy",
+            Some("cargo clippy"),
+            "cargo clippy",
+            BuildActionKind::Lint,
+            "cargo",
+            &["clippy"],
+            directory,
+        ),
+        BuildCommand::new(
+            "fmt",
+            Some("cargo fmt"),
+            "cargo fmt",
+            BuildActionKind::Lint,
+            "cargo",
+            &["fmt"],
+            directory,
+        ),
+    ];
     parsed
 }
 
 fn parse_dotnet(directory: &Path, manifest_file_name: &str) -> ParsedManifest {
-    let is_solution = manifest_file_name.to_ascii_lowercase().ends_with(".sln");
+    let is_solution = manifest_file_name.to_ascii_lowercase().ends_with(".sln")
+        || manifest_file_name.to_ascii_lowercase().ends_with(".slnx");
     let mut commands = vec![
-        command(
-            "dotnet restore".to_string(),
+        BuildCommand::new(
+            "Restore",
+            Some(format!("dotnet restore {manifest_file_name}")),
+            "dotnet restore",
+            BuildActionKind::Restore,
             "dotnet",
             &["restore", manifest_file_name],
             directory,
         ),
-        command(
-            "dotnet build".to_string(),
+        BuildCommand::new(
+            "Build",
+            Some(format!("dotnet build {manifest_file_name}")),
+            format!("dotnet build {manifest_file_name}"),
+            BuildActionKind::Build,
             "dotnet",
             &["build", manifest_file_name],
             directory,
         ),
-        command(
-            "dotnet test".to_string(),
+        BuildCommand::new(
+            "Test",
+            Some(format!("dotnet test {manifest_file_name}")),
+            format!("dotnet test {manifest_file_name}"),
+            BuildActionKind::Test,
             "dotnet",
             &["test", manifest_file_name],
             directory,
         ),
     ];
-    // `dotnet run` needs a project, not a solution.
     if !is_solution {
-        commands.push(command(
-            "dotnet run".to_string(),
+        commands.push(BuildCommand::new(
+            "Run",
+            Some(format!("dotnet run --project {manifest_file_name}")),
+            format!("dotnet run --project {manifest_file_name}"),
+            BuildActionKind::Run,
             "dotnet",
             &["run", "--project", manifest_file_name],
             directory,
@@ -494,7 +753,13 @@ mod tests {
     use std::path::Path;
 
     fn parse(system: BuildSystem, contents: &str, file_name: &str) -> ParsedManifest {
-        parse_manifest(system, contents, Path::new("/work/project"), file_name)
+        parse_manifest(
+            system,
+            contents,
+            Path::new("/work/project"),
+            file_name,
+            PackageManager::Npm,
+        )
     }
 
     fn command_lines(parsed: &ParsedManifest) -> Vec<String> {
@@ -526,6 +791,7 @@ mod tests {
         BuildProject {
             system,
             name: name.into(),
+            manifest_suffix: None,
             root: PathBuf::from(root),
             directory,
             manifest_path: Path::new(root).join(relative_manifest_path.as_std_path()),
@@ -554,6 +820,10 @@ mod tests {
         );
         assert_eq!(
             BuildSystem::from_manifest_file_name("App.sln"),
+            Some(BuildSystem::Dotnet)
+        );
+        assert_eq!(
+            BuildSystem::from_manifest_file_name("App.slnx"),
             Some(BuildSystem::Dotnet)
         );
         assert_eq!(
@@ -586,6 +856,7 @@ mod tests {
                 "npm run dev".to_string(),
                 "npm run build".to_string(),
                 "npm run test".to_string(),
+                "npm install".to_string(),
             ]
         );
     }
@@ -618,9 +889,10 @@ mod tests {
 
         assert_eq!(parsed.name.as_deref(), Some("demo-service"));
         let lines = command_lines(&parsed);
-        assert_eq!(lines.first().map(String::as_str), Some("mvn clean"));
+        assert_eq!(lines.first().map(String::as_str), Some("mvn clean compile"));
+        assert!(lines.contains(&"mvn clean package -DskipTests".to_string()));
+        assert!(lines.contains(&"mvn clean install".to_string()));
         assert!(lines.contains(&"mvn test".to_string()));
-        assert!(lines.contains(&"mvn package".to_string()));
     }
 
     #[test]
@@ -634,7 +906,7 @@ mod tests {
         assert_eq!(parsed.name.as_deref(), Some("example.com/service"));
         let lines = command_lines(&parsed);
         assert!(lines.contains(&"go build ./...".to_string()));
-        assert!(lines.contains(&"go fmt ./...".to_string()));
+        assert!(lines.contains(&"go test ./...".to_string()));
     }
 
     #[test]
@@ -680,7 +952,8 @@ mod tests {
             relative_path: RelPath::unix("services/api/Api.csproj").unwrap().into(),
         };
         let project = build_project(&candidate, "").expect("dotnet project");
-        assert_eq!(project.name.as_str(), "services/api");
+        assert_eq!(project.name.as_str(), "Api.csproj");
+        assert_eq!(project.manifest_suffix.as_deref(), Some("(services/api)"));
         assert_eq!(project.directory, Path::new("/work/services/api"));
         assert_eq!(
             project.manifest_path,
@@ -698,6 +971,7 @@ mod tests {
         };
         let project = build_project(&candidate, "module example.com/api\n").expect("go project");
         assert_eq!(project.name.as_str(), "example.com/api");
+        assert_eq!(project.manifest_suffix.as_deref(), Some("(services/api/go.mod)"));
     }
 
     #[test]
@@ -711,6 +985,7 @@ mod tests {
         let project = build_project(&candidate, r#"{ "scripts": { "build": "vite build" } }"#)
             .expect("node project");
         assert_eq!(project.name.as_str(), "web");
+        assert_eq!(project.manifest_suffix.as_deref(), Some("(package.json)"));
         assert_eq!(project.directory, Path::new("/work/web"));
     }
 
@@ -718,12 +993,15 @@ mod tests {
     fn task_template_disambiguates_identical_script_names_across_projects() {
         let first = project(BuildSystem::Node, "web", "/work/web", "package.json");
         let second = project(BuildSystem::Node, "admin", "/work/admin", "package.json");
-        let command = BuildCommand {
-            label: "npm run build".into(),
-            program: "npm".to_string(),
-            args: vec!["run".to_string(), "build".to_string()],
-            cwd: PathBuf::from("/work/web"),
-        };
+        let command = BuildCommand::new(
+            "build",
+            Some("npm run build"),
+            "npm run build",
+            BuildActionKind::Build,
+            "npm",
+            &["run", "build"],
+            Path::new("/work/web"),
+        );
 
         let first_template = command.task_template(&first.name);
         let second_template = command.task_template(&second.name);
@@ -737,12 +1015,15 @@ mod tests {
     #[test]
     fn task_context_points_at_the_command_directory() {
         let project = project(BuildSystem::Go, "api", "/work", "services/api/go.mod");
-        let command = BuildCommand {
-            label: "go build".into(),
-            program: "go".to_string(),
-            args: vec!["build".to_string()],
-            cwd: PathBuf::from("/work/services/api"),
-        };
+        let command = BuildCommand::new(
+            "build",
+            Some("go build ./..."),
+            "go build",
+            BuildActionKind::Build,
+            "go",
+            &["build"],
+            Path::new("/work/services/api"),
+        );
 
         let context = project.task_context(&command);
         assert_eq!(context.cwd, Some(PathBuf::from("/work/services/api")));

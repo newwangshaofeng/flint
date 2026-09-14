@@ -57,6 +57,7 @@ fn status_color_for_display_status(status: Option<ThreadDisplayStatus>) -> Color
 
 /// The icon shown next to a detected build project, mirroring the tool's
 /// own identity where Flint has an icon for it.
+#[allow(dead_code)]
 fn build_system_icon(system: build_commands::BuildSystem) -> IconName {
     match system {
         build_commands::BuildSystem::Node => IconName::Json,
@@ -64,6 +65,103 @@ fn build_system_icon(system: build_commands::BuildSystem) -> IconName {
         build_commands::BuildSystem::Go => IconName::FileCode,
         build_commands::BuildSystem::Dotnet => IconName::FileCode,
         build_commands::BuildSystem::Cargo => IconName::FileRust,
+    }
+}
+
+/// Brand badge icon for a build system node, matching the design specifications.
+fn render_build_system_badge(system: build_commands::BuildSystem) -> AnyElement {
+    use build_commands::BuildSystem;
+    let badge = h_flex()
+        .w(rems_from_px(16.))
+        .h(rems_from_px(16.))
+        .rounded(px(3.))
+        .items_center()
+        .justify_center()
+        .flex_shrink_0();
+
+    match system {
+        BuildSystem::Maven => badge
+            .bg(gpui::rgb(0x1976d2))
+            .child(
+                Label::new("M")
+                    .size(LabelSize::XSmall)
+                    .weight(FontWeight::BOLD)
+                    .color(Color::Custom(gpui::white().into())),
+            )
+            .into_any_element(),
+        BuildSystem::Node => badge
+            .bg(gpui::rgb(0xcb3837))
+            .child(
+                Label::new("npm")
+                    .size(LabelSize::Custom(rems_from_px(8.5)))
+                    .weight(FontWeight::BOLD)
+                    .color(Color::Custom(gpui::white().into())),
+            )
+            .into_any_element(),
+        BuildSystem::Dotnet => badge
+            .bg(gpui::rgb(0x68217a))
+            .child(
+                Icon::new(IconName::EditorVsCode)
+                    .size(IconSize::XSmall)
+                    .color(Color::Custom(gpui::white().into())),
+            )
+            .into_any_element(),
+        BuildSystem::Cargo => badge
+            .bg(gpui::rgb(0xd97706))
+            .child(
+                Icon::new(IconName::FileRust)
+                    .size(IconSize::XSmall)
+                    .color(Color::Custom(gpui::white().into())),
+            )
+            .into_any_element(),
+        BuildSystem::Go => badge
+            .bg(gpui::rgb(0x00add8))
+            .child(
+                Label::new("go")
+                    .size(LabelSize::Custom(rems_from_px(9.)))
+                    .weight(FontWeight::BOLD)
+                    .color(Color::Custom(gpui::white().into())),
+            )
+            .into_any_element(),
+    }
+}
+
+/// Category icon and brand color for a build action command row.
+fn build_action_icon_and_color(kind: build_commands::BuildActionKind) -> (IconName, Color) {
+    use build_commands::BuildActionKind;
+    match kind {
+        BuildActionKind::Run => (
+            IconName::PlayCircle,
+            Color::Custom(gpui::rgb(0x22c55e).into()),
+        ),
+        BuildActionKind::Compile | BuildActionKind::Package => (
+            IconName::Settings,
+            Color::Custom(gpui::rgb(0x36cfc9).into()),
+        ),
+        BuildActionKind::Build => (
+            IconName::ToolHammer,
+            Color::Custom(gpui::rgb(0xfaad14).into()),
+        ),
+        BuildActionKind::Preview => (
+            IconName::Eye,
+            Color::Custom(gpui::rgb(0xb37feb).into()),
+        ),
+        BuildActionKind::Install => (
+            IconName::Download,
+            Color::Custom(gpui::rgb(0x40a9ff).into()),
+        ),
+        BuildActionKind::Restore => (
+            IconName::RotateCw,
+            Color::Custom(gpui::rgb(0x40a9ff).into()),
+        ),
+        BuildActionKind::Test => (
+            IconName::Beaker,
+            Color::Custom(gpui::rgb(0x40a9ff).into()),
+        ),
+        BuildActionKind::Lint => (
+            IconName::Code,
+            Color::Custom(gpui::rgb(0x40a9ff).into()),
+        ),
     }
 }
 
@@ -1084,6 +1182,68 @@ impl AgentThreadsPanel {
         cx.notify();
     }
 
+    fn show_build_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let panel_weak = cx.entity().downgrade();
+        let manifest_paths: Vec<PathBuf> = self
+            .build_projects
+            .iter()
+            .map(|project| project.manifest_path.clone())
+            .collect();
+        let context_menu = ContextMenu::build(window, cx, move |mut context_menu, _, cx| {
+            let collapse_panel = panel_weak.clone();
+            let collapse_paths = manifest_paths.clone();
+            context_menu = context_menu.entry(
+                localization::text(cx, "agent-threads-build-collapse-all"),
+                None,
+                move |_window, cx| {
+                    if let Some(panel) = collapse_panel.upgrade() {
+                        panel.update(cx, |this, cx| {
+                            this.collapsed_build_projects.extend(collapse_paths.clone());
+                            cx.notify();
+                        });
+                    }
+                },
+            );
+
+            let expand_panel = panel_weak.clone();
+            context_menu = context_menu.entry(
+                localization::text(cx, "agent-threads-build-expand-all"),
+                None,
+                move |_window, cx| {
+                    if let Some(panel) = expand_panel.upgrade() {
+                        panel.update(cx, |this, cx| {
+                            this.collapsed_build_projects.clear();
+                            cx.notify();
+                        });
+                    }
+                },
+            );
+
+            context_menu = context_menu.separator();
+
+            let refresh_panel = panel_weak.clone();
+            context_menu = context_menu.entry(
+                localization::text(cx, "agent-threads-build-refresh"),
+                None,
+                move |_window, cx| {
+                    if let Some(panel) = refresh_panel.upgrade() {
+                        panel.update(cx, |this, cx| {
+                            this.refresh_build_commands(cx);
+                        });
+                    }
+                },
+            );
+
+            context_menu
+        });
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
     /// Schedules `command` as a task in the integrated terminal.
     fn run_build_command(
         &mut self,
@@ -1937,6 +2097,12 @@ impl AgentThreadsPanel {
     /// Once a scan completes with nothing to show the section disappears
     /// rather than occupying space with an empty state, matching how
     /// JetBrains hides tool windows that have no content for the project.
+    /// Renders the "Build" section, or `None` when the project has no
+    /// detectable build systems.
+    ///
+    /// Once a scan completes with nothing to show the section disappears
+    /// rather than occupying space with an empty state, matching how
+    /// JetBrains hides tool windows that have no content for the project.
     /// While the first scan is still running the header is shown so a
     /// detected project doesn't pop in with no explanation.
     fn render_build_section(
@@ -1971,20 +2137,38 @@ impl AgentThreadsPanel {
                                 as Arc<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App)>)),
                     )
                     .child(
-                        Icon::new(IconName::ToolHammer)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(
                         Label::new(localization::text(cx, "agent-threads-build-title"))
                             .size(LabelSize::Small)
-                            .color(Color::Muted),
+                            .weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_center()
+                            .px_1p5()
+                            .h(rems_from_px(16.))
+                            .min_w(rems_from_px(16.))
+                            .rounded_full()
+                            .bg(cx.theme().colors().element_background)
+                            .child(
+                                Label::new(project_count.to_string())
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
                     ),
             )
             .child(
-                Label::new(project_count.to_string())
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
+                IconButton::new("agent-thread-build-more", IconName::Ellipsis)
+                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip(Tooltip::text(localization::text(
+                        cx,
+                        "agent-threads-build-more-tooltip",
+                    )))
+                    .on_click(cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                        this.show_build_menu(event.position(), window, cx);
+                    })),
             );
 
         let mut body_children: Vec<AnyElement> = Vec::new();
@@ -2023,14 +2207,32 @@ impl AgentThreadsPanel {
         let collapsed = self.collapsed_build_projects.contains(&manifest_path);
         let project_id = SharedString::from(format!("agent-thread-build-project-{project_index}"));
 
+        let mut name_elements = vec![
+            Label::new(project.name.clone())
+                .size(LabelSize::Small)
+                .weight(FontWeight::MEDIUM)
+                .truncate()
+                .into_any_element(),
+        ];
+        if let Some(suffix) = &project.manifest_suffix {
+            name_elements.push(
+                Label::new(suffix.clone())
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted)
+                    .truncate()
+                    .into_any_element(),
+            );
+        }
+
         let header = h_flex()
             .id(project_id)
             .w_full()
             .gap_1p5()
             .items_center()
-            .pl_6()
+            .pl_3()
             .pr_2()
             .py_1()
+            .rounded_sm()
             .hover(|style| style.bg(cx.theme().colors().element_hover))
             .child(
                 Disclosure::new(
@@ -2046,21 +2248,8 @@ impl AgentThreadsPanel {
                 ))
                     as Arc<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App)>)),
             )
-            .child(
-                Icon::new(build_system_icon(project.system))
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(
-                Label::new(project.name.clone())
-                    .size(LabelSize::Small)
-                    .truncate(),
-            )
-            .child(
-                Label::new(project.system.label())
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-            );
+            .child(render_build_system_badge(project.system))
+            .children(name_elements);
 
         let mut children: Vec<AnyElement> = vec![header.into_any_element()];
         if !collapsed {
@@ -2078,8 +2267,8 @@ impl AgentThreadsPanel {
         v_flex().w_full().children(children).into_any_element()
     }
 
-    /// One command row: double-click the row or click the play button to run
-    /// it, matching the IntelliJ and WebStorm tool window behavior.
+    /// One command row: click the row or click the play button to run it
+    /// in the integrated terminal.
     fn render_build_command(
         &mut self,
         project: &BuildProject,
@@ -2097,35 +2286,57 @@ impl AgentThreadsPanel {
         let run_project = project.clone();
         let run_command = command.clone();
 
+        let (icon_name, icon_color) = build_action_icon_and_color(command.kind);
+
+        let mut text_children = vec![
+            Label::new(command.name.clone())
+                .size(LabelSize::Small)
+                .weight(FontWeight::MEDIUM)
+                .truncate()
+                .into_any_element(),
+        ];
+        if let Some(subtitle) = &command.subtitle {
+            text_children.push(
+                Label::new(subtitle.clone())
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted)
+                    .truncate()
+                    .into_any_element(),
+            );
+        }
+
         h_flex()
             .id(SharedString::from(format!(
                 "agent-thread-build-command-row-{project_index}-{command_index}"
             )))
             .group(group_name.clone())
             .w_full()
-            .gap_1p5()
+            .gap_2()
             .items_center()
-            .pl_6()
+            .pl_7()
             .pr_2()
-            .py_0p5()
+            .py_1()
             .rounded_sm()
             .hover(|style| style.bg(cx.theme().colors().element_hover))
             .on_click(cx.listener({
                 let project = run_project.clone();
                 let command = run_command.clone();
-                move |this, event: &gpui::ClickEvent, window, cx| {
-                    if event.click_count() > 1 {
-                        this.run_build_command(&project, &command, window, cx);
-                    }
+                move |this, _event: &gpui::ClickEvent, window, cx| {
+                    this.run_build_command(&project, &command, window, cx);
                 }
             }))
             .child(
-                Label::new(command.label.clone())
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .truncate(),
+                Icon::new(icon_name)
+                    .size(IconSize::Small)
+                    .color(icon_color),
             )
-            .child(div().flex_1())
+            .child(
+                v_flex()
+                    .flex_1()
+                    .gap_0p5()
+                    .overflow_hidden()
+                    .children(text_children),
+            )
             .child(
                 IconButton::new(play_button_id, IconName::PlayFilled)
                     .shape(IconButtonShape::Square)
@@ -5713,8 +5924,12 @@ mod tests {
                 .iter()
                 .map(|command| command.label.to_string())
                 .collect::<Vec<_>>(),
-            vec!["npm run dev".to_string(), "npm run build".to_string()],
-            "scripts should keep their package.json order"
+            vec![
+                "npm run dev".to_string(),
+                "npm run build".to_string(),
+                "npm install".to_string(),
+            ],
+            "scripts should keep their package.json order and include install"
         );
     }
 
@@ -5757,7 +5972,7 @@ mod tests {
             "a .csproj covered by a sibling .sln should be skipped, got {names:?}"
         );
         assert!(
-            names.iter().any(|name| name == "dotnet"),
+            names.iter().any(|name| name == "App.sln"),
             "the solution itself should still be listed, got {names:?}"
         );
     }

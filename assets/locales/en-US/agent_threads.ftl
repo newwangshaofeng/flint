@@ -73,3 +73,7 @@ agent-threads-control-skills-all-title = Flint control skills for all supported 
 agent-threads-build-title = Build
 agent-threads-build-scanning = Scanning for build projects…
 agent-threads-build-run-tooltip = Run
+agent-threads-build-more-tooltip = More build options
+agent-threads-build-collapse-all = Collapse All
+agent-threads-build-expand-all = Expand All
+agent-threads-build-refresh = Refresh
