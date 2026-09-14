@@ -70,3 +70,6 @@ agent-threads-control-skill-reminder-detail = The optional skill lets Codex, Pi,
 agent-threads-control-skill-manage = Review and Install
 agent-threads-control-skill-not-now = Not Now
 agent-threads-control-skills-all-title = Flint control skills for all supported agents
+agent-threads-build-title = Build
+agent-threads-build-scanning = Scanning for build projects…
+agent-threads-build-run-tooltip = Run
