@@ -582,6 +582,22 @@ mod domain_tests {
     use super::*;
 
     #[test]
+    fn droid_mcp_port_is_added_only_for_local_terminals() {
+        let mut local = HashMap::default();
+        insert_droid_mcp_port_env(&mut local, Some(4321));
+        assert_eq!(
+            local.get(DROID_MCP_PORT_ENV).map(String::as_str),
+            Some("4321")
+        );
+
+        // A remote terminal must not learn about a loopback port on this
+        // machine, so the variable is omitted entirely.
+        let mut remote = HashMap::default();
+        insert_droid_mcp_port_env(&mut remote, None);
+        assert!(!remote.contains_key(DROID_MCP_PORT_ENV));
+    }
+
+    #[test]
     fn strip_ansi_text_removes_ansi_and_handles_carriage_returns() {
         let cases = [
             ("no escape codes here\n", "no escape codes here\n"),
@@ -686,6 +702,30 @@ pub fn insert_flint_terminal_env(
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
     env.insert("TERM_PROGRAM_VERSION".to_string(), version.to_string());
+}
+
+/// The port of the local Droid IDE context bridge, when one is running.
+///
+/// Set by the bridge itself so this crate does not depend on it. Only local
+/// terminals read this; a remote shell must not be told about a loopback port
+/// on this machine.
+pub struct DroidMcpPort(pub u16);
+impl gpui::Global for DroidMcpPort {}
+
+/// The environment variable Factory's CLI reads to find an IDE bridge.
+///
+/// The name is load-bearing: the CLI only looks for this exact variable, and
+/// adding an alias would make it discover the same server twice.
+const DROID_MCP_PORT_ENV: &str = "FACTORY_VSCODE_MCP_PORT";
+
+/// Adds the bridge port to a local terminal's environment.
+///
+/// `port` is `None` for a remote terminal, which must never be told about a
+/// port on this machine's loopback interface: the remote host cannot reach it.
+fn insert_droid_mcp_port_env(env: &mut HashMap<String, String>, port: Option<u16>) {
+    if let Some(port) = port {
+        env.insert(DROID_MCP_PORT_ENV.to_string(), port.to_string());
+    }
 }
 
 ///Upward flowing events, for changing the title and such
@@ -1041,6 +1081,12 @@ impl TerminalBuilder {
         path_style: PathStyle,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
+        // Read the bridge port before entering the async block: `cx` cannot be
+        // captured by the 'static future, and a remote terminal must never see
+        // a loopback port from this machine.
+        let droid_mcp_port = (!is_remote_terminal)
+            .then(|| cx.try_global::<DroidMcpPort>().map(|port| port.0))
+            .flatten();
         let background_executor = cx.background_executor().clone();
         #[cfg(not(windows))]
         let child_signal_mask = match current_child_signal_mask()
@@ -1064,6 +1110,7 @@ impl TerminalBuilder {
             }
 
             insert_flint_terminal_env(&mut env, &version);
+            insert_droid_mcp_port_env(&mut env, droid_mcp_port);
 
             #[derive(Default)]
             struct ShellParams {

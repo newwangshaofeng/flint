@@ -143,6 +143,14 @@ Flint supports Droid (Factory CLI) as a terminal-backed agent thread. Flint auto
 
 Selecting a past session resumes it using `droid --resume <session_id>`, preserving its context and history. Flint also detects Droid's interactive command approvals and directory trust prompts to keep the sidebar status dot updated.
 
+#### IDE Context {#droid-ide-context}
+
+Flint runs a local IDE context bridge that Droid finds automatically. In local Droid threads, the CLI can read the workspace folders, the active file, the current selection, the open files, and the diagnostics for a file. You don't configure anything, and the bridge only listens on `127.0.0.1`.
+
+Droid reads this context through the `getIdeDiagnostics` tool. The bridge is read-only: Droid can't open files, apply edits, or show diffs in Flint through it.
+
+The bridge is not available in remote projects. A remote project's files live on another host, so a local bridge would hand Droid paths it can't read. Remote terminals never receive the bridge port.
+
 ## Credentials and Remote Projects {#credentials-and-remote-projects}
 
 Credentials come from the terminal session and the CLI/TUI running inside it.

@@ -790,6 +790,10 @@ fn main() {
         // there would bind a real OS socket under the real data dir on
         // every test run.
         agent_threads::init_control_server(cx);
+        // Same rule as the control server above: only from the real app entry
+        // point, because this binds a loopback socket and writes a lock file
+        // under the user's home directory.
+        droid_mcp::init(cx);
         log::info!("init: workspace initialized, opening window");
 
         cx.activate(true);
