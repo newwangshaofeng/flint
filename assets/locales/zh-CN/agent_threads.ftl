@@ -77,3 +77,6 @@ agent-threads-build-more-tooltip = 更多构建选项
 agent-threads-build-collapse-all = 全部折叠
 agent-threads-build-expand-all = 全部展开
 agent-threads-build-refresh = 刷新
+agent-threads-build-badge-maven = M
+agent-threads-build-badge-npm = npm
+agent-threads-build-badge-go = go

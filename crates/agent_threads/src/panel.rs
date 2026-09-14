@@ -69,7 +69,7 @@ fn build_system_icon(system: build_commands::BuildSystem) -> IconName {
 }
 
 /// Brand badge icon for a build system node, matching the design specifications.
-fn render_build_system_badge(system: build_commands::BuildSystem) -> AnyElement {
+fn render_build_system_badge(system: build_commands::BuildSystem, cx: &App) -> AnyElement {
     use build_commands::BuildSystem;
     let badge = h_flex()
         .w(rems_from_px(16.))
@@ -83,19 +83,19 @@ fn render_build_system_badge(system: build_commands::BuildSystem) -> AnyElement 
         BuildSystem::Maven => badge
             .bg(gpui::rgb(0x1976d2))
             .child(
-                Label::new("M")
+                Label::new(localization::text(cx, "agent-threads-build-badge-maven"))
                     .size(LabelSize::XSmall)
                     .weight(FontWeight::BOLD)
-                    .color(Color::Custom(gpui::white().into())),
+                    .color(Color::Custom(gpui::white())),
             )
             .into_any_element(),
         BuildSystem::Node => badge
             .bg(gpui::rgb(0xcb3837))
             .child(
-                Label::new("npm")
+                Label::new(localization::text(cx, "agent-threads-build-badge-npm"))
                     .size(LabelSize::Custom(rems_from_px(8.5)))
                     .weight(FontWeight::BOLD)
-                    .color(Color::Custom(gpui::white().into())),
+                    .color(Color::Custom(gpui::white())),
             )
             .into_any_element(),
         BuildSystem::Dotnet => badge
@@ -103,7 +103,7 @@ fn render_build_system_badge(system: build_commands::BuildSystem) -> AnyElement 
             .child(
                 Icon::new(IconName::EditorVsCode)
                     .size(IconSize::XSmall)
-                    .color(Color::Custom(gpui::white().into())),
+                    .color(Color::Custom(gpui::white())),
             )
             .into_any_element(),
         BuildSystem::Cargo => badge
@@ -111,16 +111,16 @@ fn render_build_system_badge(system: build_commands::BuildSystem) -> AnyElement 
             .child(
                 Icon::new(IconName::FileRust)
                     .size(IconSize::XSmall)
-                    .color(Color::Custom(gpui::white().into())),
+                    .color(Color::Custom(gpui::white())),
             )
             .into_any_element(),
         BuildSystem::Go => badge
             .bg(gpui::rgb(0x00add8))
             .child(
-                Label::new("go")
+                Label::new(localization::text(cx, "agent-threads-build-badge-go"))
                     .size(LabelSize::Custom(rems_from_px(9.)))
                     .weight(FontWeight::BOLD)
-                    .color(Color::Custom(gpui::white().into())),
+                    .color(Color::Custom(gpui::white())),
             )
             .into_any_element(),
     }
@@ -1217,7 +1217,7 @@ impl AgentThreadsPanel {
 
             context_menu = context_menu.separator();
 
-            let refresh_panel = panel_weak.clone();
+            let refresh_panel = panel_weak;
             context_menu = context_menu.entry(
                 localization::text(cx, "agent-threads-build-refresh"),
                 None,
@@ -2241,7 +2241,7 @@ impl AgentThreadsPanel {
                 ))
                     as Arc<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App)>)),
             )
-            .child(render_build_system_badge(project.system))
+            .child(render_build_system_badge(project.system, cx))
             .children(name_elements);
 
         let mut children: Vec<AnyElement> = vec![header.into_any_element()];

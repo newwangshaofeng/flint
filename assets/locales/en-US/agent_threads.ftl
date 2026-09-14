@@ -77,3 +77,6 @@ agent-threads-build-more-tooltip = More build options
 agent-threads-build-collapse-all = Collapse All
 agent-threads-build-expand-all = Expand All
 agent-threads-build-refresh = Refresh
+agent-threads-build-badge-maven = M
+agent-threads-build-badge-npm = npm
+agent-threads-build-badge-go = go
