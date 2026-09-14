@@ -142,10 +142,7 @@ fn build_action_icon_and_color(kind: build_commands::BuildActionKind) -> (IconNa
             IconName::ToolHammer,
             Color::Custom(gpui::rgb(0xfaad14).into()),
         ),
-        BuildActionKind::Preview => (
-            IconName::Eye,
-            Color::Custom(gpui::rgb(0xb37feb).into()),
-        ),
+        BuildActionKind::Preview => (IconName::Eye, Color::Custom(gpui::rgb(0xb37feb).into())),
         BuildActionKind::Install => (
             IconName::Download,
             Color::Custom(gpui::rgb(0x40a9ff).into()),
@@ -154,14 +151,8 @@ fn build_action_icon_and_color(kind: build_commands::BuildActionKind) -> (IconNa
             IconName::RotateCw,
             Color::Custom(gpui::rgb(0x40a9ff).into()),
         ),
-        BuildActionKind::Test => (
-            IconName::Beaker,
-            Color::Custom(gpui::rgb(0x40a9ff).into()),
-        ),
-        BuildActionKind::Lint => (
-            IconName::Code,
-            Color::Custom(gpui::rgb(0x40a9ff).into()),
-        ),
+        BuildActionKind::Test => (IconName::Beaker, Color::Custom(gpui::rgb(0x40a9ff).into())),
+        BuildActionKind::Lint => (IconName::Code, Color::Custom(gpui::rgb(0x40a9ff).into())),
     }
 }
 
@@ -2166,9 +2157,11 @@ impl AgentThreadsPanel {
                         cx,
                         "agent-threads-build-more-tooltip",
                     )))
-                    .on_click(cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                        this.show_build_menu(event.position(), window, cx);
-                    })),
+                    .on_click(
+                        cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                            this.show_build_menu(event.position(), window, cx);
+                        }),
+                    ),
             );
 
         let mut body_children: Vec<AnyElement> = Vec::new();
@@ -2325,11 +2318,7 @@ impl AgentThreadsPanel {
                     this.run_build_command(&project, &command, window, cx);
                 }
             }))
-            .child(
-                Icon::new(icon_name)
-                    .size(IconSize::Small)
-                    .color(icon_color),
-            )
+            .child(Icon::new(icon_name).size(IconSize::Small).color(icon_color))
             .child(
                 v_flex()
                     .flex_1()

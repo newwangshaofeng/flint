@@ -971,7 +971,10 @@ mod tests {
         };
         let project = build_project(&candidate, "module example.com/api\n").expect("go project");
         assert_eq!(project.name.as_str(), "example.com/api");
-        assert_eq!(project.manifest_suffix.as_deref(), Some("(services/api/go.mod)"));
+        assert_eq!(
+            project.manifest_suffix.as_deref(),
+            Some("(services/api/go.mod)")
+        );
     }
 
     #[test]
