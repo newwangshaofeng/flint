@@ -41,6 +41,7 @@ struct RunningBridge {
     bridge: Bridge,
     server: server::ServerHandle,
     lock_file: SharedLockFile,
+    _collector: context::CollectorHandle,
     /// Held only for its lifetime: dropping the task stops the heartbeat.
     _heartbeat: Task<()>,
 }
@@ -96,7 +97,7 @@ fn start_bridge(cx: &mut App) -> Result<RunningBridge> {
     lock_file.write()?;
     let lock_file = Arc::new(Mutex::new(lock_file));
 
-    context::start(bridge.clone(), lock_file.clone(), cx);
+    let _collector = context::start(bridge.clone(), lock_file.clone(), cx);
 
     let heartbeat_bridge = bridge.clone();
     let heartbeat_lock = lock_file.clone();
@@ -115,6 +116,7 @@ fn start_bridge(cx: &mut App) -> Result<RunningBridge> {
         bridge,
         server,
         lock_file,
+        _collector,
         _heartbeat,
     })
 }

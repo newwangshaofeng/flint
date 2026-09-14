@@ -15,28 +15,72 @@ use crate::state::{
     Position, SelectionSnapshot,
 };
 use editor::{Editor, EditorEvent};
-use gpui::{App, Window};
+use gpui::{App, Task, Window};
 use language::{Buffer, BufferEvent, Diagnostic, DiagnosticSeverity};
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::Duration;
 use text::PointUtf16;
 use workspace::{MultiWorkspace, Workspace};
+
+/// Manages the debounce task and collector state.
+pub struct CollectorHandle {
+    _state: Rc<RefCell<CollectorState>>,
+}
+
+struct CollectorState {
+    bridge: Bridge,
+    lock_file: SharedLockFile,
+    refresh_task: Option<Task<()>>,
+}
+
+impl CollectorState {
+    fn schedule_refresh(state: &Rc<RefCell<Self>>, cx: &mut App) {
+        let weak_state = Rc::downgrade(state);
+        let task = cx.spawn(async move |cx| {
+            // Debounce for 50ms so rapid events (startup window restoration, typing,
+            // selection changes) are coalesced into a single collection, and crucially
+            // run only after current entity updates and effect flushes have completed.
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+            cx.update(move |cx| {
+                if let Some(state) = weak_state.upgrade() {
+                    let (bridge, lock_file) = {
+                        let borrowed = state.borrow();
+                        (borrowed.bridge.clone(), borrowed.lock_file.clone())
+                    };
+                    refresh(&bridge, &lock_file, cx);
+                }
+            });
+        });
+
+        state.borrow_mut().refresh_task = Some(task);
+    }
+}
 
 /// Starts collecting context into `bridge`.
 ///
 /// Subscribes to the entities that exist now and to every one created later, so
 /// windows opened after startup are covered. Discovered workspace roots are
 /// published through `lock_file`.
-pub fn start(bridge: Bridge, lock_file: SharedLockFile, cx: &mut App) {
+pub fn start(bridge: Bridge, lock_file: SharedLockFile, cx: &mut App) -> CollectorHandle {
+    let state = Rc::new(RefCell::new(CollectorState {
+        bridge,
+        lock_file,
+        refresh_task: None,
+    }));
+
     // Every subscription here is detached rather than stored. They must outlive
     // this call, but keeping the handles would retain one per editor and buffer
     // ever created; GPUI already drops an entity's listeners when the entity is
     // released, so there is nothing left to clean up.
     cx.observe_new({
-        let bridge = bridge.clone();
-        let lock_file = lock_file.clone();
+        let state = state.clone();
         move |_multi_workspace: &mut MultiWorkspace, _, cx| {
-            refresh(&bridge, &lock_file, cx);
+            CollectorState::schedule_refresh(&state, cx);
         }
     })
     .detach();
@@ -44,12 +88,10 @@ pub fn start(bridge: Bridge, lock_file: SharedLockFile, cx: &mut App) {
     // Activating a workspace, or moving between its tabs, changes what the CLI
     // should consider current.
     cx.observe_new({
-        let bridge = bridge.clone();
-        let lock_file = lock_file.clone();
+        let state = state.clone();
         move |_workspace: &mut Workspace, _, cx| {
             cx.subscribe_self({
-                let bridge = bridge.clone();
-                let lock_file = lock_file.clone();
+                let state = state.clone();
                 move |_workspace, event: &workspace::Event, cx| {
                     if matches!(
                         event,
@@ -58,24 +100,22 @@ pub fn start(bridge: Bridge, lock_file: SharedLockFile, cx: &mut App) {
                             | workspace::Event::ItemRemoved { .. }
                             | workspace::Event::Activate
                     ) {
-                        refresh(&bridge, &lock_file, cx);
+                        CollectorState::schedule_refresh(&state, cx);
                     }
                 }
             })
             .detach();
-            refresh(&bridge, &lock_file, cx);
+            CollectorState::schedule_refresh(&state, cx);
         }
     })
     .detach();
 
     // Any of these can move the selection or change what the CLI should see.
     cx.observe_new({
-        let bridge = bridge.clone();
-        let lock_file = lock_file.clone();
+        let state = state.clone();
         move |_editor: &mut Editor, _, cx| {
             cx.subscribe_self({
-                let bridge = bridge.clone();
-                let lock_file = lock_file.clone();
+                let state = state.clone();
                 move |_editor, event: &EditorEvent, cx| {
                     if matches!(
                         event,
@@ -85,7 +125,7 @@ pub fn start(bridge: Bridge, lock_file: SharedLockFile, cx: &mut App) {
                             | EditorEvent::TitleChanged
                             | EditorEvent::FileHandleChanged
                     ) {
-                        refresh(&bridge, &lock_file, cx);
+                        CollectorState::schedule_refresh(&state, cx);
                     }
                 }
             })
@@ -96,15 +136,13 @@ pub fn start(bridge: Bridge, lock_file: SharedLockFile, cx: &mut App) {
 
     // Diagnostics are attached to buffers, not editors.
     cx.observe_new({
-        let bridge = bridge.clone();
-        let lock_file = lock_file.clone();
+        let state = state.clone();
         move |_buffer: &mut Buffer, _, cx| {
             cx.subscribe_self({
-                let bridge = bridge.clone();
-                let lock_file = lock_file.clone();
+                let state = state.clone();
                 move |_buffer, event: &BufferEvent, cx| {
                     if matches!(event, BufferEvent::DiagnosticsUpdated) {
-                        refresh(&bridge, &lock_file, cx);
+                        CollectorState::schedule_refresh(&state, cx);
                     }
                 }
             })
@@ -113,7 +151,9 @@ pub fn start(bridge: Bridge, lock_file: SharedLockFile, cx: &mut App) {
     })
     .detach();
 
-    refresh(&bridge, &lock_file, cx);
+    CollectorState::schedule_refresh(&state, cx);
+
+    CollectorHandle { _state: state }
 }
 
 /// Recomputes the snapshot from the active window and publishes it.
@@ -158,35 +198,35 @@ fn collect(
     let workspace = Workspace::for_window(window, cx)?;
 
     // The workspace borrow ends before diagnostics are gathered, because that
-    // step needs `&mut App` to visit every window.
+    // step needs `&cx` to inspect buffers.
     let (workspace_folders, active_file, open_files) = {
-        let workspace = workspace.read(cx);
+        let workspace_ref = workspace.read(cx);
 
         // Remote projects are out of scope: the CLI runs locally and cannot
         // read paths that live on another host.
-        if workspace.project().read(cx).remote_client().is_some() {
+        if workspace_ref.project().read(cx).remote_client().is_some() {
             return None;
         }
 
-        let workspace_folders = workspace
+        let workspace_folders = workspace_ref
             .root_paths(cx)
             .into_iter()
             .map(|path| PathBuf::from(path.as_ref()))
             .collect();
 
-        let active_file = workspace
+        let active_file = workspace_ref
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
             .and_then(|editor| active_file(&editor, cx));
 
-        let open_files = open_files(workspace, cx);
+        let open_files = open_files(workspace_ref, cx);
 
         (workspace_folders, active_file, open_files)
     };
 
     let diagnostics = active_file.as_ref().and_then(|active_file| {
         let path = PathBuf::from(&active_file.path);
-        diagnostics_for(&path, cx).map(|diagnostics| (path, diagnostics))
+        diagnostics_for(&workspace, &path, cx).map(|diagnostics| (path, diagnostics))
     });
 
     Some((
@@ -281,32 +321,21 @@ fn open_files(workspace: &Workspace, cx: &App) -> Vec<OpenFile> {
 /// Reads diagnostics for `path` from whichever open buffer backs it.
 ///
 /// Diagnostics live on buffers, so the buffer is located by matching absolute
-/// paths rather than by maintaining a parallel registry.
-fn diagnostics_for(path: &Path, cx: &mut App) -> Option<FileDiagnostics> {
-    // Any project can own the buffer; the CLI may ask about a file that is open
-    // in a window that is not focused.
-    for window in cx.windows() {
-        let found = window
-            .update(cx, |_root, window, cx| {
-                let workspace = Workspace::for_window(window, cx)?;
-                let project = workspace.read(cx).project().clone();
-                for buffer in project.read(cx).opened_buffers(cx) {
-                    let buffer = buffer.read(cx);
-                    let Some(local_file) = buffer.file().and_then(|file| file.as_local()) else {
-                        continue;
-                    };
-                    if local_file.abs_path(cx).as_path() != path {
-                        continue;
-                    }
-                    return Some(collect_buffer_diagnostics(buffer));
-                }
-                None
-            })
-            .ok()
-            .flatten();
-
-        if found.is_some() {
-            return found;
+/// paths against opened buffers in the active project.
+fn diagnostics_for(
+    workspace: &gpui::Entity<Workspace>,
+    path: &Path,
+    cx: &App,
+) -> Option<FileDiagnostics> {
+    let workspace = workspace.read(cx);
+    let project = workspace.project().read(cx);
+    for buffer in project.opened_buffers(cx) {
+        let buffer = buffer.read(cx);
+        let Some(local_file) = buffer.file().and_then(|file| file.as_local()) else {
+            continue;
+        };
+        if local_file.abs_path(cx).as_path() == path {
+            return Some(collect_buffer_diagnostics(buffer));
         }
     }
 

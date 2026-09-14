@@ -152,8 +152,10 @@ impl LockFile {
             file.sync_all()
                 .with_context(|| format!("failed to flush {temporary:?}"))?;
         }
-        std::fs::rename(&temporary, &self.path)
-            .with_context(|| format!("failed to publish {:?}", self.path))?;
+        if let Err(error) = std::fs::rename(&temporary, &self.path) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error).with_context(|| format!("failed to publish {:?}", self.path));
+        }
         Ok(())
     }
 
