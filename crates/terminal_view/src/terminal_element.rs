@@ -1079,8 +1079,7 @@ impl Element for TerminalElement {
                         terminal.set_size(dimensions);
                         terminal.sync(window, cx);
 
-                        if window.modifiers().secondary()
-                            && bounds.contains(&window.mouse_position())
+                        if bounds.contains(&window.mouse_position())
                             && self.terminal_view.read(cx).hover.is_some()
                         {
                             let registered_hover = self.terminal_view.read(cx).hover.as_ref();
@@ -1355,10 +1354,12 @@ impl Element for TerminalElement {
                 &layout.content_mode,
                 window,
             );
-            if window.modifiers().secondary()
-                && bounds.contains(&window.mouse_position())
-                && self.terminal_view.read(cx).hover.is_some()
-            {
+            // `hyperlink_tooltip` is only produced when the terminal's current
+            // hovered word still matches the hover the view registered, so it
+            // doubles as the freshness check for the pointing hand. Keying off
+            // the bare `hover` field instead would show the hand over any text
+            // for as long as a stale hover lingered.
+            if layout.hyperlink_tooltip.is_some() {
                 window.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
             } else {
                 window.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);

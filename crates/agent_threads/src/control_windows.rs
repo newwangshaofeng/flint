@@ -921,7 +921,7 @@ mod tests {
             agent_control_protocol::CreateThreadRequest {
                 worktree: agent_control_protocol::CreateThreadWorktree::Current,
                 name: None,
-                agent: "codex".to_string(),
+                agent: "droid".to_string(),
                 prompt: prompt.into(),
                 split: None,
                 focus: false,

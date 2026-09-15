@@ -527,15 +527,22 @@ mod tests {
         let mut labels = Vec::new();
         collect_menu_labels(&menus, &mut labels);
 
-        for label in [
+        assert!(
+            labels
+                .iter()
+                .any(|candidate| candidate == "New Droid Thread"),
+            "missing first-class agent action \"New Droid Thread\""
+        );
+
+        for retired in [
             "New Codex Thread",
             "New Claude Thread",
             "New Pi Thread",
             "New OpenCode Thread",
         ] {
             assert!(
-                labels.iter().any(|candidate| candidate == label),
-                "missing first-class agent action {label:?}"
+                !labels.iter().any(|candidate| candidate == retired),
+                "retired agent action {retired:?} should not be present; labels: {labels:?}"
             );
         }
     }
@@ -550,7 +557,7 @@ mod tests {
         let mut labels = Vec::new();
         collect_menu_labels(&menus, &mut labels);
 
-        for label in ["文件", "编辑", "设置", "命令面板...", "新建 Codex 线程"] {
+        for label in ["文件", "编辑", "设置", "命令面板...", "新建 Droid 线程"] {
             assert!(labels.iter().any(|candidate| candidate == label));
         }
     }

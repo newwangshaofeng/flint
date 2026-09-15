@@ -3611,42 +3611,43 @@ mod tests {
     fn managed_resume_replaces_only_the_configured_executable() {
         let kind = agent_kind_registry()
             .into_iter()
-            .find(|kind| kind.id == "codex")
-            .expect("Codex should be registered");
+            .find(|kind| kind.id == "droid")
+            .expect("Droid should be registered");
         let mut environment = HashMap::default();
-        environment.insert("CODEX_HOME".to_string(), "/remote/codex-home".to_string());
+        environment.insert(
+            "FACTORY_HOME_OVERRIDE".to_string(),
+            "/remote/factory-home".to_string(),
+        );
         let base = AgentLaunchCommand {
-            command: Some("codex".to_string()),
+            command: Some("droid".to_string()),
             env: environment,
             initialization_command: Some("source ~/.profile".to_string()),
             ..AgentLaunchCommand::default()
         };
         let managed_executable =
-            PathBuf::from("/remote/flint/agents/codex/0.144.6/linux-x86_64-glibc/codex");
+            PathBuf::from("/remote/flint/agents/droid/0.144.6/linux-x86_64-glibc/droid");
 
         let command = build_managed_resume_command(
             &kind,
             &base,
             &historical("session-a", 10),
-            &["--dangerously-bypass-approvals-and-sandbox".to_string()],
+            &["--auto".to_string()],
             &managed_executable,
         )
-        .expect("Codex should support resume");
+        .expect("Droid should support resume");
 
         assert_eq!(command.command.as_deref(), managed_executable.to_str());
+        assert_eq!(command.args, vec!["--resume", "session-a", "--auto"]);
         assert_eq!(
-            command.args,
-            vec![
-                "resume",
-                "session-a",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "--config",
-                "check_for_update_on_startup=false"
-            ]
+            command.env.get("FACTORY_HOME_OVERRIDE").map(String::as_str),
+            Some("/remote/factory-home")
         );
         assert_eq!(
-            command.env.get("CODEX_HOME").map(String::as_str),
-            Some("/remote/codex-home")
+            command
+                .env
+                .get("FACTORY_DROID_AUTO_UPDATE_ENABLED")
+                .map(String::as_str),
+            Some("false")
         );
         assert_eq!(
             command.initialization_command.as_deref(),
@@ -3738,14 +3739,14 @@ mod tests {
     fn managed_seeded_launch_uses_the_pinned_executable_and_keeps_the_prompt() {
         let kind = agent_kind_registry()
             .into_iter()
-            .find(|kind| kind.id == "codex")
-            .expect("Codex is registered");
+            .find(|kind| kind.id == "droid")
+            .expect("Droid is registered");
         let base = AgentLaunchCommand {
-            command: Some("ambient-codex".to_string()),
+            command: Some("ambient-droid".to_string()),
             args: vec!["base".to_string()],
             ..AgentLaunchCommand::default()
         };
-        let managed_executable = PathBuf::from("/managed/codex");
+        let managed_executable = PathBuf::from("/managed/droid");
 
         let (launch, seeded) = build_seeded_new_thread_launch(
             &kind,
@@ -3767,12 +3768,12 @@ mod tests {
     }
 
     #[test]
-    fn managed_agents_keep_their_generated_session_ids() {
-        for kind_id in ["claude", "pi"] {
-            let kind = agent_kind_registry()
-                .into_iter()
-                .find(|kind| kind.id == kind_id)
-                .expect("agent should be registered");
+    fn managed_launch_without_a_session_id_flag_reports_none() {
+        // Droid's CLI has no flag for assigning a fresh session id, so a
+        // managed launch must not fabricate one: fresh threads are bound to
+        // the id their own session file reports instead.
+        for kind in agent_kind_registry() {
+            assert_eq!(kind.session_id_flag, None);
             let launch = build_new_thread_launch(
                 &kind,
                 &AgentLaunchCommand::default(),
@@ -3780,14 +3781,13 @@ mod tests {
                 Some(std::path::Path::new("/managed/agent")),
             );
 
-            let session_id = launch
-                .session_id
-                .expect("managed launch should have a session id");
+            assert!(launch.session_id.is_none());
             assert!(
-                launch
+                !launch
                     .command
                     .args
-                    .ends_with(&["--session-id".to_string(), session_id.to_string(),])
+                    .iter()
+                    .any(|argument| argument == "--session-id")
             );
         }
     }

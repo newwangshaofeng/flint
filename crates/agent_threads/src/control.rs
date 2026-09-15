@@ -1978,7 +1978,7 @@ mod tests {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.agent_threads = Some(AgentThreadSettingsContent {
-                    codex: Some(echo_command("codex", root_path)),
+                    droid: Some(echo_command("droid", root_path)),
                     ..Default::default()
                 });
             });
@@ -1995,24 +1995,24 @@ mod tests {
         cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx))
     }
 
-    fn codex_kind() -> crate::AgentKindDefinition {
+    fn droid_kind() -> crate::AgentKindDefinition {
         agent_kind_registry()
             .into_iter()
-            .find(|kind| kind.id == "codex")
-            .expect("codex should be registered")
+            .find(|kind| kind.id == "droid")
+            .expect("droid should be registered")
     }
 
-    fn launch_codex_thread(window_handle: &WindowHandle<MultiWorkspace>, cx: &mut TestAppContext) {
+    fn launch_droid_thread(window_handle: &WindowHandle<MultiWorkspace>, cx: &mut TestAppContext) {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    crate::launch_new_thread_with_default(workspace, &codex_kind(), window, cx);
+                    crate::launch_new_thread_with_default(workspace, &droid_kind(), window, cx);
                 });
             })
-            .expect("failed to launch codex thread");
+            .expect("failed to launch droid thread");
     }
 
-    fn live_codex_threads(
+    fn live_droid_threads(
         cx: &mut TestAppContext,
         project_root: &str,
     ) -> Vec<store::AgentThreadMetadata> {
@@ -2020,7 +2020,7 @@ mod tests {
             AgentThreadStore::global(cx)
                 .read(cx)
                 .live_threads_for_project(
-                    "codex",
+                    "droid",
                     &[PathBuf::from(project_root)],
                     &store::TieResolution::not_ready(),
                 )
@@ -2033,7 +2033,7 @@ mod tests {
     async fn wait_for_live_count(cx: &mut TestAppContext, project_root: &str, expected: usize) {
         for _ in 0..50 {
             cx.run_until_parked();
-            if live_codex_threads(cx, project_root).len() >= expected {
+            if live_droid_threads(cx, project_root).len() >= expected {
                 return;
             }
             cx.executor()
@@ -2063,7 +2063,7 @@ mod tests {
     /// `dispatch_for_caller`-level test below builds on, since that
     /// function takes the caller's identity as a plain parameter rather
     /// than resolving it itself.
-    async fn spawn_live_codex_thread(
+    async fn spawn_live_droid_thread(
         cx: &mut TestAppContext,
     ) -> (WindowHandle<MultiWorkspace>, EntityId) {
         cx.executor().allow_parking();
@@ -2072,7 +2072,7 @@ mod tests {
         configure_echo_threads(cx, root);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_live_count(cx, root, 1).await;
 
         let terminal_item_id = terminal_views(&window_handle, cx)[0].entity_id();
@@ -2415,7 +2415,7 @@ mod tests {
 
     #[gpui::test]
     async fn dispatch_for_caller_rejects_a_nonexistent_retie_directory(cx: &mut TestAppContext) {
-        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
         let request = ControlRequest::current(ControlCommand::ThreadRetie(RetieThreadRequest {
             worktree: PathBuf::from("/definitely/does/not/exist/anywhere"),
@@ -2427,7 +2427,7 @@ mod tests {
 
     #[gpui::test]
     async fn dispatch_for_caller_moves_the_terminal_on_retie(cx: &mut TestAppContext) {
-        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         let root_b = std::env::temp_dir().join("agent_control_dispatch_retie_test");
         std::fs::create_dir_all(&root_b).expect("failed to create the retie target directory");
 
@@ -2451,7 +2451,7 @@ mod tests {
     async fn terminal_current_list_read_and_immediate_wait_use_the_registered_terminal(
         cx: &mut TestAppContext,
     ) {
-        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         cx.run_until_parked();
         let records = cx.update(crate::terminal_control::records);
         let caller = records
@@ -2533,7 +2533,7 @@ mod tests {
 
     #[gpui::test]
     async fn terminal_split_rejects_a_raw_invalid_direction(cx: &mut TestAppContext) {
-        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         cx.run_until_parked();
         let records = cx.update(crate::terminal_control::records);
         let caller = records
@@ -2568,7 +2568,7 @@ mod tests {
 
     #[gpui::test]
     async fn terminal_open_rejects_a_nonexistent_local_working_directory(cx: &mut TestAppContext) {
-        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         cx.run_until_parked();
         let records = cx.update(crate::terminal_control::records);
         let caller = records
@@ -2602,7 +2602,7 @@ mod tests {
     async fn terminal_open_returns_registered_metadata_in_the_callers_pane(
         cx: &mut TestAppContext,
     ) {
-        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         cx.run_until_parked();
         let records = cx.update(crate::terminal_control::records);
         let caller = records
@@ -2710,7 +2710,7 @@ mod tests {
     async fn terminal_split_places_a_registered_terminal_beside_the_selected_center_terminal(
         cx: &mut TestAppContext,
     ) {
-        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         cx.run_until_parked();
         let records = cx.update(crate::terminal_control::records);
         let caller = records
@@ -2762,7 +2762,7 @@ mod tests {
     async fn terminal_split_places_a_registered_terminal_beside_the_selected_panel_terminal(
         cx: &mut TestAppContext,
     ) {
-        let (window_handle, _terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (window_handle, _terminal_item_id) = spawn_live_droid_thread(cx).await;
         let terminal_panel = window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
@@ -2825,7 +2825,7 @@ mod tests {
     async fn ordinary_terminal_can_create_terminals_but_cannot_create_agent_threads(
         cx: &mut TestAppContext,
     ) {
-        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
@@ -2920,7 +2920,7 @@ mod tests {
             &ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
                 worktree: CreateThreadWorktree::Current,
                 name: None,
-                agent: "codex".to_string(),
+                agent: "droid".to_string(),
                 prompt: "must be rejected".to_string(),
                 split: None,
                 focus: false,
@@ -2938,8 +2938,8 @@ mod tests {
 
     #[gpui::test]
     async fn remote_dispatch_is_bound_to_connection_and_registration(cx: &mut TestAppContext) {
-        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
-        let (_other_window_handle, other_terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
+        let (_other_window_handle, other_terminal_item_id) = spawn_live_droid_thread(cx).await;
         cx.run_until_parked();
         let records = cx.update(crate::terminal_control::records);
         let local_record = records
@@ -3160,7 +3160,7 @@ mod tests {
 
     #[gpui::test]
     async fn terminal_read_since_rejects_a_non_recent_source(cx: &mut TestAppContext) {
-        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         cx.run_until_parked();
         let records = cx.update(crate::terminal_control::records);
         let caller = records
@@ -3198,7 +3198,7 @@ mod tests {
     async fn terminal_read_since_round_trips_the_cursor_and_rejects_an_unrelated_one(
         cx: &mut TestAppContext,
     ) {
-        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         cx.run_until_parked();
         let records = cx.update(crate::terminal_control::records);
         let caller = records
@@ -3254,7 +3254,7 @@ mod tests {
 
     #[gpui::test]
     async fn terminal_run_writes_enter_separately_from_command_text(cx: &mut TestAppContext) {
-        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         cx.run_until_parked();
         let records = cx.update(crate::terminal_control::records);
         let terminal = records
@@ -3279,7 +3279,7 @@ mod tests {
 
     #[gpui::test]
     async fn dispatch_for_caller_rejects_an_unknown_agent(cx: &mut TestAppContext) {
-        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
         let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
             worktree: CreateThreadWorktree::Current,
@@ -3296,12 +3296,12 @@ mod tests {
 
     #[gpui::test]
     async fn dispatch_for_caller_rejects_split_for_a_new_worktree(cx: &mut TestAppContext) {
-        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
         let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
             worktree: CreateThreadWorktree::New,
             name: Some("unused-worktree".to_string()),
-            agent: "codex".to_string(),
+            agent: "droid".to_string(),
             prompt: "do the thing".to_string(),
             split: Some("right".to_string()),
             focus: false,
@@ -3320,12 +3320,12 @@ mod tests {
     async fn dispatch_for_caller_rejects_an_unseedable_prompt_without_starting_a_thread(
         cx: &mut TestAppContext,
     ) {
-        let (_window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
         let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
             worktree: CreateThreadWorktree::Current,
             name: None,
-            agent: "codex".to_string(),
+            agent: "droid".to_string(),
             prompt: "   ".to_string(),
             split: None,
             focus: false,
@@ -3351,7 +3351,7 @@ mod tests {
 
     #[gpui::test]
     async fn dispatch_for_caller_seeds_a_new_sibling_thread(cx: &mut TestAppContext) {
-        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         let source_pane = window_handle
             .read_with(cx, |multi_workspace, cx| {
                 multi_workspace
@@ -3365,7 +3365,7 @@ mod tests {
         let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
             worktree: CreateThreadWorktree::Current,
             name: None,
-            agent: "codex".to_string(),
+            agent: "droid".to_string(),
             prompt: "do the thing".to_string(),
             split: None,
             focus: false,
@@ -3407,7 +3407,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         for direction in ["left", "right", "up", "down"] {
-            let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+            let (window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
             cx.run_until_parked();
             window_handle
                 .update(cx, |multi_workspace, window, cx| {
@@ -3433,7 +3433,7 @@ mod tests {
                 ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
                     worktree: CreateThreadWorktree::Current,
                     name: None,
-                    agent: "codex".to_string(),
+                    agent: "droid".to_string(),
                     prompt: format!("split {direction}"),
                     split: Some(direction.to_string()),
                     focus: false,
@@ -3467,7 +3467,7 @@ mod tests {
     async fn dispatch_for_caller_focuses_a_sibling_thread_only_when_requested(
         cx: &mut TestAppContext,
     ) {
-        let (window_handle, terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (window_handle, terminal_item_id) = spawn_live_droid_thread(cx).await;
         let source_pane = window_handle
             .read_with(cx, |multi_workspace, cx| {
                 multi_workspace
@@ -3481,7 +3481,7 @@ mod tests {
         let request = ControlRequest::current(ControlCommand::ThreadCreate(CreateThreadRequest {
             worktree: CreateThreadWorktree::Current,
             name: None,
-            agent: "codex".to_string(),
+            agent: "droid".to_string(),
             prompt: "focus the sibling".to_string(),
             split: None,
             focus: true,
@@ -3551,7 +3551,7 @@ mod tests {
     #[cfg(unix)]
     #[gpui::test]
     async fn control_server_round_trips_a_request_over_a_real_socket(cx: &mut TestAppContext) {
-        let (_window_handle, _terminal_item_id) = spawn_live_codex_thread(cx).await;
+        let (_window_handle, _terminal_item_id) = spawn_live_droid_thread(cx).await;
         let store = cx.update(|cx| AgentThreadStore::global(cx));
 
         let temp_dir = tempfile::tempdir().expect("failed to create a temp dir for the socket");

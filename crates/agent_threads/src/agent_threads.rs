@@ -1040,6 +1040,9 @@ mod tests {
         );
         assert!(droid.credential_policy().is_none());
         assert!(!droid.supports_plan_usage());
+        // No tunneled egress allowlist: Droid authenticates against Factory's
+        // own endpoints and has no reviewed host set yet.
+        assert!(droid.egress_hosts().is_empty());
         assert!(
             droid
                 .release_for(remote::RemotePlatform {
@@ -1079,80 +1082,15 @@ mod tests {
     }
 
     #[test]
-    fn opencode_registers_all_supported_capabilities() {
-        let opencode = kind_by_id("opencode").expect("OpenCode should be registered");
-
-        assert_eq!(opencode.label.as_ref(), "OpenCode");
-        assert_eq!(opencode.icon, IconName::AiOpenCode);
-        assert_eq!(opencode.default_command, "opencode");
-        assert!(opencode.history_provider.is_some());
-        assert_eq!(opencode.session_id_flag, None);
-        assert_eq!(
-            opencode.initial_prompt_strategy,
-            InitialPromptStrategy::Flag("--prompt")
-        );
-        assert!(opencode.credential_policy().is_none());
-        assert!(!opencode.supports_plan_usage());
-        assert_eq!(
-            opencode.self_update_policy().environment,
-            [("OPENCODE_DISABLE_AUTOUPDATE", "1")]
-        );
-        assert!(
-            opencode
-                .release_for(remote::RemotePlatform {
-                    os: remote::RemoteOs::MacOs,
-                    arch: remote::RemoteArch::Aarch64,
-                    libc: None,
-                })
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn opencode_resume_uses_session_flag_and_project_directory() {
-        let opencode = kind_by_id("opencode").expect("OpenCode should be registered");
-        let provider = opencode
-            .history_provider
-            .as_ref()
-            .expect("OpenCode should provide history");
-        let base = AgentLaunchCommand {
-            command: Some("custom-opencode".to_string()),
-            env: HashMap::from_iter([("EXISTING".to_string(), "value".to_string())]),
-            initialization_command: Some("source ~/.profile".to_string()),
-            ..Default::default()
-        };
-        let thread = HistoricalThread {
-            session_id: "ses_test".into(),
-            title: "OpenCode task".into(),
-            project_root: PathBuf::from("/work/project"),
-            last_activity_at: std::time::SystemTime::UNIX_EPOCH,
-        };
-
-        let command = provider.resume_command(&base, &thread, &["--auto".to_string()]);
-
-        assert_eq!(command.command.as_deref(), Some("custom-opencode"));
-        assert_eq!(command.args, ["--session", "ses_test", "--auto"]);
-        assert_eq!(command.cwd, Some(PathBuf::from("/work/project")));
-        assert_eq!(
-            command.env.get("EXISTING").map(String::as_str),
-            Some("value")
-        );
-        assert_eq!(
-            command.initialization_command.as_deref(),
-            Some("source ~/.profile")
-        );
-    }
-
-    #[test]
     fn seed_launch_command_appends_prompt_after_existing_args() {
-        let codex = kind_by_id("codex").unwrap();
+        let droid = kind_by_id("droid").unwrap();
         let mut command = AgentLaunchCommand {
             args: vec!["--dangerously-bypass-approvals-and-sandbox".to_string()],
             ..Default::default()
         };
         assert!(seed_launch_command_with_prompt(
             &mut command,
-            &codex,
+            &droid,
             "read the handoff doc and continue"
         ));
         assert_eq!(
@@ -1166,11 +1104,11 @@ mod tests {
 
     #[test]
     fn seed_launch_command_rejects_dash_prefixed_prompt() {
-        let claude = kind_by_id("claude").unwrap();
+        let droid = kind_by_id("droid").unwrap();
         let mut command = AgentLaunchCommand::default();
         assert!(!seed_launch_command_with_prompt(
             &mut command,
-            &claude,
+            &droid,
             "--dangerously-skip-permissions looks like a flag"
         ));
         assert!(command.args.is_empty());
@@ -1178,18 +1116,19 @@ mod tests {
 
     #[test]
     fn seed_launch_command_rejects_empty_prompt() {
-        let pi = kind_by_id("pi").unwrap();
+        let droid = kind_by_id("droid").unwrap();
         let mut command = AgentLaunchCommand::default();
-        assert!(!seed_launch_command_with_prompt(&mut command, &pi, "   "));
+        assert!(!seed_launch_command_with_prompt(
+            &mut command,
+            &droid,
+            "   "
+        ));
         assert!(command.args.is_empty());
     }
 
     #[test]
     fn registered_kinds_use_their_supported_initial_prompt_form() {
-        for kind in agent_kind_registry()
-            .into_iter()
-            .filter(|kind| kind.id != "opencode")
-        {
+        for kind in agent_kind_registry() {
             assert_eq!(
                 kind.initial_prompt_strategy,
                 InitialPromptStrategy::TrailingPositionalArg,
@@ -1197,30 +1136,6 @@ mod tests {
                 kind.id
             );
         }
-
-        let opencode = kind_by_id("opencode").expect("OpenCode should be registered");
-        let mut command = AgentLaunchCommand {
-            args: vec!["--auto".to_string()],
-            ..Default::default()
-        };
-        assert!(seed_launch_command_with_prompt(
-            &mut command,
-            &opencode,
-            "continue from the handoff"
-        ));
-        assert_eq!(
-            command.args,
-            ["--auto", "--prompt", "continue from the handoff"]
-        );
-    }
-
-    #[test]
-    fn pi_registers_history_without_provider_specific_controls() {
-        let pi = kind_by_id("pi").expect("Pi should be registered");
-
-        assert!(pi.history_provider.is_some());
-        assert!(pi.credential_policy().is_none());
-        assert!(!pi.supports_plan_usage());
     }
 
     #[test]
@@ -1266,62 +1181,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn destination_policy_contains_only_required_model_and_authentication_hosts() {
-        let codex = kind_by_id("codex").expect("Codex should be registered");
-        let claude = kind_by_id("claude").expect("Claude should be registered");
-
-        assert_eq!(
-            codex.egress_hosts(),
-            ["api.openai.com", "auth.openai.com", "chatgpt.com"]
-        );
-        assert_eq!(
-            claude.egress_hosts(),
-            ["api.anthropic.com", "claude.ai", "platform.claude.com"]
-        );
-        let pi = kind_by_id("pi").expect("Pi should be registered");
-        assert!(pi.egress_hosts().contains(&"api.anthropic.com"));
-        assert!(pi.egress_hosts().contains(&"api.openai.com"));
-        assert!(pi.egress_hosts().contains(&"*.amazonaws.com"));
-        assert!(pi.egress_hosts().contains(&"*.googleapis.com"));
-        assert!(pi.egress_hosts().contains(&"pi.dev"));
-
-        let opencode = kind_by_id("opencode").expect("OpenCode should be registered");
-        assert!(opencode.egress_hosts().contains(&"api.anthropic.com"));
-        assert!(opencode.egress_hosts().contains(&"api.openai.com"));
-        assert!(opencode.egress_hosts().contains(&"api.opencode.ai"));
-        assert!(opencode.egress_hosts().contains(&"models.dev"));
-        assert!(opencode.egress_hosts().contains(&"*.amazonaws.com"));
-        assert!(opencode.egress_hosts().contains(&"*.googleapis.com"));
-    }
-
-    #[test]
-    fn credential_policies_use_pinned_cli_commands_and_provider_surfaces() {
-        let codex = kind_by_id("codex").expect("Codex kind should exist");
-        let codex_policy = codex
-            .credential_policy()
-            .expect("Codex should have a credential policy");
-        assert_eq!(codex_policy.login_arguments, ["login", "--device-auth"]);
-        assert_eq!(codex_policy.status_arguments, ["login", "status"]);
-        assert_eq!(codex_policy.logout_arguments, ["logout"]);
-        assert_eq!(
-            codex_policy.provider_management_url,
-            "https://platform.openai.com/api-keys"
-        );
-
-        let claude = kind_by_id("claude").expect("Claude kind should exist");
-        let claude_policy = claude
-            .credential_policy()
-            .expect("Claude should have a credential policy");
-        assert_eq!(claude_policy.login_arguments, ["auth", "login"]);
-        assert_eq!(claude_policy.status_arguments, ["auth", "status"]);
-        assert_eq!(claude_policy.logout_arguments, ["auth", "logout"]);
-        assert_eq!(
-            claude_policy.provider_management_url,
-            "https://claude.ai/settings/claude-code"
-        );
-    }
-
     #[gpui::test]
     fn route_change_guard_is_connection_scoped(cx: &mut TestAppContext) {
         let first = remote::RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
@@ -1348,7 +1207,7 @@ mod tests {
 
     fn command_with_default(default_launch_option: Option<&str>) -> AgentLaunchCommand {
         AgentLaunchCommand {
-            command: Some("codex".to_string()),
+            command: Some("droid".to_string()),
             args: Vec::new(),
             env: HashMap::default(),
             cwd: None,
@@ -1358,16 +1217,49 @@ mod tests {
         }
     }
 
+    /// Droid ships with no resume options, so the resolver is exercised
+    /// against a synthetic kind that carries one. This keeps the
+    /// label-to-args matching logic covered independently of whichever
+    /// kinds happen to be registered.
+    fn kind_with_resume_option() -> AgentKindDefinition {
+        AgentKindDefinition {
+            id: "test-kind",
+            label: SharedString::new_static("Test Kind"),
+            icon: IconName::AiDroid,
+            default_command: "test-kind",
+            home_env_var: "TEST_HOME",
+            home_env_child: None,
+            home_dir_name: ".test",
+            history_provider: None,
+            resume_options: vec![ResumeOption {
+                id: "bypass",
+                label: SharedString::new_static("Bypass approvals & sandbox"),
+                args: vec!["--dangerously-bypass-approvals-and-sandbox".to_string()],
+            }],
+            session_id_flag: None,
+            initial_prompt_strategy: InitialPromptStrategy::TrailingPositionalArg,
+            official_source_prefixes: &[],
+            releases: &[],
+            self_update_policy: AgentSelfUpdatePolicy {
+                environment: &[],
+                arguments: &[],
+            },
+            egress_hosts: &[],
+            credential_policy: None,
+            supports_plan_usage: false,
+        }
+    }
+
     #[test]
     fn resolve_default_launch_args_returns_empty_when_unset() {
-        let kind = kind_by_id("codex").unwrap();
+        let kind = kind_with_resume_option();
         let command = command_with_default(None);
         assert!(resolve_default_launch_args(&command, &kind).is_empty());
     }
 
     #[test]
     fn resolve_default_launch_args_returns_matching_option_args() {
-        let kind = kind_by_id("codex").unwrap();
+        let kind = kind_with_resume_option();
         let command = command_with_default(Some("Bypass approvals & sandbox"));
         assert_eq!(
             resolve_default_launch_args(&command, &kind),
@@ -1377,7 +1269,7 @@ mod tests {
 
     #[test]
     fn resolve_default_launch_args_returns_empty_when_label_unknown() {
-        let kind = kind_by_id("codex").unwrap();
+        let kind = kind_with_resume_option();
         let command = command_with_default(Some("nonexistent option"));
         assert!(resolve_default_launch_args(&command, &kind).is_empty());
     }
