@@ -2166,10 +2166,28 @@ impl Workspace {
 
     pub fn persisted_panel_size_state(
         &self,
-        panel_key: &'static str,
+        panel_key: &str,
         cx: &App,
     ) -> Option<dock::PanelSizeState> {
         dock::Dock::load_persisted_size_state(self, panel_key, cx)
+    }
+
+    pub fn default_dock_size(
+        &self,
+        position: DockPosition,
+        active_panel_name: Option<&str>,
+    ) -> Pixels {
+        match position {
+            DockPosition::Left => px(240.),
+            DockPosition::Right => px(280.),
+            DockPosition::Bottom => {
+                if active_panel_name == Some("DebugPanel") {
+                    px(300.)
+                } else {
+                    px(320.)
+                }
+            }
+        }
     }
 
     pub fn persist_panel_size_state(
@@ -2239,44 +2257,67 @@ impl Workspace {
     }
 
     fn dock_size(&self, dock: &Dock, window: &Window, cx: &App) -> Option<Pixels> {
-        let panel = dock.active_panel()?;
-        let size_state = dock
-            .stored_panel_size_state(panel.as_ref())
-            .unwrap_or_default();
         let position = dock.position();
+        if let Some(panel) = dock.active_panel() {
+            let size_state = dock
+                .stored_panel_size_state(panel.as_ref())
+                .unwrap_or_default();
 
-        let use_flex = panel.has_flexible_size(window, cx);
+            let use_flex = panel.has_flexible_size(window, cx);
 
-        if position.axis() == Axis::Horizontal
-            && use_flex
-            && let Some(flex) = size_state.flex.or_else(|| self.default_dock_flex(position))
-        {
-            let workspace_width = self.bounds.size.width;
-            if workspace_width <= Pixels::ZERO {
-                return None;
+            if position.axis() == Axis::Horizontal
+                && use_flex
+                && let Some(flex) = size_state.flex.or_else(|| self.default_dock_flex(position))
+            {
+                let workspace_width = self.bounds.size.width;
+                if workspace_width <= Pixels::ZERO {
+                    return None;
+                }
+                let flex = flex.max(0.001);
+                let center_column_count = self.center_full_height_column_count();
+                let opposite = self.opposite_dock_panel_and_size_state(position, window, cx);
+                if let Some(opposite_flex) = opposite.as_ref().and_then(|(_, s)| s.flex) {
+                    let total_flex = flex + center_column_count + opposite_flex;
+                    return Some((flex / total_flex * workspace_width).max(RESIZE_HANDLE_SIZE));
+                } else {
+                    let opposite_fixed = opposite
+                        .map(|(panel, s)| s.size.unwrap_or_else(|| panel.default_size(window, cx)))
+                        .unwrap_or_default();
+                    let available = (workspace_width - opposite_fixed).max(RESIZE_HANDLE_SIZE);
+                    return Some(
+                        (flex / (flex + center_column_count) * available).max(RESIZE_HANDLE_SIZE),
+                    );
+                }
             }
-            let flex = flex.max(0.001);
-            let center_column_count = self.center_full_height_column_count();
-            let opposite = self.opposite_dock_panel_and_size_state(position, window, cx);
-            if let Some(opposite_flex) = opposite.as_ref().and_then(|(_, s)| s.flex) {
-                let total_flex = flex + center_column_count + opposite_flex;
-                return Some((flex / total_flex * workspace_width).max(RESIZE_HANDLE_SIZE));
-            } else {
-                let opposite_fixed = opposite
-                    .map(|(panel, s)| s.size.unwrap_or_else(|| panel.default_size(window, cx)))
-                    .unwrap_or_default();
-                let available = (workspace_width - opposite_fixed).max(RESIZE_HANDLE_SIZE);
-                return Some(
-                    (flex / (flex + center_column_count) * available).max(RESIZE_HANDLE_SIZE),
-                );
-            }
+
+            Some(
+                size_state
+                    .size
+                    .unwrap_or_else(|| panel.default_size(window, cx)),
+            )
+        } else if dock.is_open() {
+            let active_panel_name = dock
+                .serialized_dock
+                .as_ref()
+                .and_then(|d| d.active_panel.as_deref());
+            let size_state = active_panel_name
+                .map(Self::canonical_panel_key)
+                .and_then(|key| self.persisted_panel_size_state(key, cx))
+                .or_else(|| {
+                    if position == DockPosition::Bottom {
+                        self.persisted_panel_size_state("TerminalPanel", cx)
+                    } else {
+                        None
+                    }
+                });
+            Some(
+                size_state
+                    .and_then(|state| state.size)
+                    .unwrap_or_else(|| self.default_dock_size(position, active_panel_name)),
+            )
+        } else {
+            None
         }
-
-        Some(
-            size_state
-                .size
-                .unwrap_or_else(|| panel.default_size(window, cx)),
-        )
     }
 
     pub fn dock_flex_for_size(
@@ -6819,6 +6860,13 @@ impl Workspace {
             });
     }
 
+    fn canonical_panel_key(name: &str) -> &str {
+        match name {
+            "Agent Threads Panel" => "AgentThreadsPanel",
+            other => other,
+        }
+    }
+
     fn adjust_padding(padding: Option<f32>) -> f32 {
         padding
             .unwrap_or(CenteredPaddingSettings::default().0)
@@ -6886,6 +6934,50 @@ impl Workspace {
                 let size = size_state
                     .and_then(|state| state.size)
                     .unwrap_or_else(|| panel.default_size(window, cx));
+                container = container.h(size);
+            }
+        } else if dock.is_open() {
+            // The dock is restored as open, but its panels are still loading asynchronously.
+            // Reserve the dock's persisted or default size immediately so the center pane
+            // (e.g. active editor or resumed agent thread) lays out at the correct height
+            // from the very first frame, avoiding layout jumps and terminal truncation.
+            let active_panel_name = dock
+                .serialized_dock
+                .as_ref()
+                .and_then(|d| d.active_panel.as_deref());
+            let size_state = active_panel_name
+                .map(Self::canonical_panel_key)
+                .and_then(|key| self.persisted_panel_size_state(key, cx))
+                .or_else(|| {
+                    if position == DockPosition::Bottom {
+                        self.persisted_panel_size_state("TerminalPanel", cx)
+                    } else {
+                        None
+                    }
+                });
+
+            if position.axis() == Axis::Horizontal {
+                let flex_grow = size_state
+                    .and_then(|state| state.flex)
+                    .or_else(|| self.default_dock_flex(position));
+                if let Some(grow) = flex_grow {
+                    let grow = (grow / self.center_full_height_column_count()).max(0.001);
+                    let style = container.style();
+                    style.flex_grow = Some(grow);
+                    style.flex_shrink = Some(1.0);
+                    style.flex_basis = Some(relative(0.).into());
+                } else {
+                    let size = size_state
+                        .and_then(|state| state.size)
+                        .unwrap_or_else(|| self.default_dock_size(position, active_panel_name));
+                    container = container.w(size);
+                    let style = container.style();
+                    style.flex_shrink = Some(1.0);
+                }
+            } else {
+                let size = size_state
+                    .and_then(|state| state.size)
+                    .unwrap_or_else(|| self.default_dock_size(position, active_panel_name));
                 container = container.h(size);
             }
         }
@@ -12238,6 +12330,71 @@ mod tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_restored_open_dock_reserves_size_before_panels_load(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+            workspace.bounds.size.width = px(1200.);
+            workspace.bounds.size.height = px(800.);
+        });
+
+        // Persist a custom bottom dock panel size into KVP
+        workspace.update(cx, |workspace, cx| {
+            workspace.persist_panel_size_state(
+                "TerminalPanel",
+                dock::PanelSizeState {
+                    size: Some(px(250.)),
+                    flex: None,
+                },
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Simulate restoring dock state where bottom dock was open with TerminalPanel active,
+        // but TerminalPanel has NOT been registered yet (as occurs during async startup).
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.serialized_dock = Some(DockData {
+                    visible: true,
+                    active_panel: Some("TerminalPanel".to_string()),
+                    zoom: false,
+                });
+                dock.restore_state(window, cx);
+            });
+
+            // Before any panel is added, dock_size should immediately return the reserved size
+            let bottom_dock = workspace.bottom_dock().read(cx);
+            assert!(bottom_dock.is_open());
+            assert!(bottom_dock.visible_panel().is_none());
+
+            let reserved_size = workspace.dock_size(&bottom_dock, window, cx);
+            assert_eq!(
+                reserved_size,
+                Some(px(250.)),
+                "bottom dock must reserve its persisted size before panels are registered"
+            );
+
+            // render_dock must produce a container with height set to the reserved size
+            let dock_container =
+                workspace.render_dock(DockPosition::Bottom, workspace.bottom_dock(), window, cx);
+            assert!(
+                dock_container.is_some(),
+                "render_dock should produce a container for the open dock"
+            );
+        });
     }
 
     #[gpui::test]
