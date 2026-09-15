@@ -1056,7 +1056,7 @@ impl Dock {
 
     pub(crate) fn load_persisted_size_state(
         workspace: &Workspace,
-        panel_key: &'static str,
+        panel_key: &str,
         cx: &App,
     ) -> Option<PanelSizeState> {
         let workspace_id = workspace
@@ -1172,6 +1172,25 @@ impl Render for Dock {
                 )
                 .when(self.resizable(cx), |this| {
                     this.child(create_resize_handle())
+                })
+        } else if self.is_open {
+            div()
+                .id("dock-panel")
+                .key_context(dispatch_context)
+                .track_focus(&self.focus_handle(cx))
+                .focus_follows_mouse(self.focus_follows_mouse, cx)
+                .flex()
+                .bg(cx.theme().colors().panel_background)
+                .border_color(cx.theme().colors().border)
+                .overflow_hidden()
+                .map(|this| match self.position().axis() {
+                    Axis::Horizontal => this.w_full().h_full().flex_row(),
+                    Axis::Vertical => this.h_full().w_full().flex_col(),
+                })
+                .map(|this| match self.position() {
+                    DockPosition::Left => this.border_r_1(),
+                    DockPosition::Right => this.border_l_1(),
+                    DockPosition::Bottom => this.border_t_1(),
                 })
         } else {
             div()
