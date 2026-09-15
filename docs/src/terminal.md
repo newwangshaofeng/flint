@@ -272,9 +272,22 @@ When enabled, mouse scroll events are converted to arrow key presses in applicat
 }
 ```
 
-## Path Hyperlinks
+## Hyperlinks
 
-Flint detects file paths in terminal output and makes them clickable. `Cmd+Click` (macOS) or `Ctrl+Click` (Linux/Windows) opens the file in Flint, jumping to the line number if one is detected.
+URLs in terminal output are underlined and show a pointing hand when you hover
+over them. `Cmd+Click` (macOS) or `Ctrl+Click` (Linux/Windows) opens the URL in
+your default browser.
+
+Flint recognizes `http://`, `https://`, `file://`, `mailto:`, and other common
+schemes, plus OSC 8 hyperlinks emitted by the running program.
+
+### Path Hyperlinks
+
+Flint detects file paths in terminal output and makes them clickable. Hold
+`Cmd` (macOS) or `Ctrl` (Linux/Windows) while hovering to underline a path, then
+click to open the file in Flint, jumping to the line number if one is detected.
+Path detection stays behind the modifier because resolving a path consults your
+project and filesystem, which is too much work to run on every mouse movement.
 
 Common formats recognized:
 

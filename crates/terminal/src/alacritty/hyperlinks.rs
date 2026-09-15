@@ -92,6 +92,7 @@ pub(crate) fn find_from_grid_point<T: EventListener>(
     point: AlacPoint,
     regex_searches: &mut RegexSearches,
     path_style: PathStyle,
+    search_paths: bool,
 ) -> Option<HyperlinkMatch> {
     let grid = term.grid();
     let link = grid.index(point).hyperlink();
@@ -133,6 +134,11 @@ pub(crate) fn find_from_grid_point<T: EventListener>(
 
         if let Some((url, url_match)) = url_match {
             Some((url, true, url_match))
+        } else if !search_paths {
+            // Path regexes are comparatively expensive and plenty of ordinary
+            // words match them, so they only run when the user asks for path
+            // resolution (by holding the modifier) rather than on every hover.
+            None
         } else {
             path_match(
                 &term,
@@ -1341,6 +1347,7 @@ mod tests {
                         point,
                         &mut regex_searches.borrow_mut(),
                         PathStyle::local(),
+                        true,
                     )
                 })
             }
@@ -1944,6 +1951,7 @@ mod tests {
                 expected_hyperlink.hovered_grid_point,
                 &mut regex_searches.borrow_mut(),
                 PathStyle::local(),
+                true,
             )
         });
         let check_hyperlink_match =
@@ -1972,5 +1980,64 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Plain hovering must still underline URLs, since that is what the mouse
+    /// does most of the time. Path detection is the expensive half, so it is
+    /// expected to stay behind the modifier.
+    #[test]
+    fn urls_are_found_without_searching_paths() {
+        use alacritty_terminal::term::test::mock_term;
+
+        const LINE_TEXT: &str = "see http://127.0.0.1:3100/ and src/main.rs";
+        let mut term = mock_term(LINE_TEXT);
+        term.resize(TermSize {
+            columns: 80,
+            screen_lines: 10,
+        });
+
+        let line = Line(0);
+        let column_of = |needle: &str| {
+            let offset = LINE_TEXT
+                .find(needle)
+                .expect("the test line contains the needle");
+            AlacPoint::new(line, Column(offset))
+        };
+        let mut regex_searches = RegexSearches::new([r"(?<path>[\w/]+\.rs)"], 1000);
+
+        let url = find_from_grid_point(
+            &term,
+            column_of("127.0.0.1"),
+            &mut regex_searches,
+            PathStyle::local(),
+            false,
+        )
+        .expect("a URL should be found even when paths are not searched for");
+        assert!(url.is_url, "the match should be a URL");
+        assert_eq!(url.text, "http://127.0.0.1:3100/");
+
+        assert!(
+            find_from_grid_point(
+                &term,
+                column_of("main"),
+                &mut regex_searches,
+                PathStyle::local(),
+                false,
+            )
+            .is_none(),
+            "a path should not be resolved while paths are not searched for"
+        );
+        assert_eq!(
+            find_from_grid_point(
+                &term,
+                column_of("main"),
+                &mut regex_searches,
+                PathStyle::local(),
+                true,
+            )
+            .map(|hyperlink| hyperlink.text),
+            Some("src/main.rs".to_string()),
+            "a path should be resolved once paths are searched for"
+        );
     }
 }

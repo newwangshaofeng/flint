@@ -770,7 +770,7 @@ enum InternalEvent {
     ScrollToPoint(Point),
     SetSelection(Option<Selection>),
     UpdateSelection(GpuiPoint<Pixels>),
-    FindHyperlink(GpuiPoint<Pixels>, bool),
+    FindHyperlink(GpuiPoint<Pixels>, bool, bool),
     ProcessHyperlink(HyperlinkMatch, bool),
     // Whether keep selection when copy
     Copy(Option<bool>),
@@ -1629,7 +1629,9 @@ impl Terminal {
             InternalEvent::Scroll(scroll) => {
                 trace!("Scrolling: scroll={scroll:?}");
                 scroll_display(term, *scroll);
-                self.refresh_hovered_word(window);
+                let modifiers = window.modifiers();
+                let position = window.mouse_position();
+                self.refresh_hovered_word(modifiers, position);
 
                 if self.vi_mode_enabled {
                     update_vi_cursor_for_scroll(term, *scroll);
@@ -1692,12 +1694,16 @@ impl Terminal {
             InternalEvent::ScrollToPoint(point) => {
                 trace!("Scrolling to point: point={point:?}");
                 scroll_to_point(term, *point);
-                self.refresh_hovered_word(window);
+                let modifiers = window.modifiers();
+                let position = window.mouse_position();
+                self.refresh_hovered_word(modifiers, position);
             }
             InternalEvent::MoveViCursorToPoint(point) => {
                 trace!("Move vi cursor to point: point={point:?}");
                 vi_goto_point(term, *point);
-                self.refresh_hovered_word(window);
+                let modifiers = window.modifiers();
+                let position = window.mouse_position();
+                self.refresh_hovered_word(modifiers, position);
             }
             InternalEvent::ToggleViMode => {
                 trace!("Toggling vi mode");
@@ -1708,7 +1714,7 @@ impl Terminal {
                 trace!("Performing vi motion: motion={motion:?}");
                 vi_motion(term, *motion);
             }
-            InternalEvent::FindHyperlink(position, open) => {
+            InternalEvent::FindHyperlink(position, open, search_paths) => {
                 trace!("Finding hyperlink at position: position={position:?}, open={open:?}");
 
                 let point = grid_point(
@@ -1722,13 +1728,20 @@ impl Terminal {
                     point,
                     &mut self.hyperlink_regex_searches,
                     self.path_style,
+                    *search_paths,
                 ) {
                     Some(hyperlink) => {
                         self.process_hyperlink(hyperlink, *open, cx);
                     }
                     None => {
-                        self.last_content.last_hovered_word = None;
-                        cx.emit(Event::NewNavigationTarget(None));
+                        // Detection now also runs on plain hovering, so most
+                        // moves land here with nothing to clear. Emitting
+                        // regardless would notify the view and repaint on every
+                        // mouse move over ordinary text, so only report a
+                        // change when a hover is actually being dropped.
+                        if self.last_content.last_hovered_word.take().is_some() {
+                            cx.emit(Event::NewNavigationTarget(None));
+                        }
                     }
                 }
             }
@@ -1785,13 +1798,18 @@ impl Terminal {
         }
     }
 
-    fn find_hyperlink_at_point(&mut self, point: Point) -> Option<HyperlinkMatch> {
+    fn find_hyperlink_at_point(
+        &mut self,
+        point: Point,
+        search_paths: bool,
+    ) -> Option<HyperlinkMatch> {
         let term_lock = self.term.lock();
         find_from_terminal_point(
             &term_lock,
             point,
             &mut self.hyperlink_regex_searches,
             self.path_style,
+            search_paths,
         )
     }
 
@@ -1809,7 +1827,7 @@ impl Terminal {
             self.last_content.terminal_bounds,
             self.last_content.display_offset,
         );
-        let hyperlink = self.find_hyperlink_at_point(point)?;
+        let hyperlink = self.find_hyperlink_at_point(point, true)?;
         Some(Self::navigation_target_for_hyperlink(
             hyperlink.is_url,
             hyperlink.text,
@@ -2175,9 +2193,14 @@ impl Terminal {
             .terminal_bounds
             .bounds
             .contains(&window.mouse_position())
-            && modifiers.secondary()
         {
-            self.refresh_hovered_word(window);
+            // The modifier decides whether path-like targets are searched for,
+            // so both pressing and releasing it must re-detect under the
+            // pointer: pressing resolves the path, releasing drops its
+            // underline. Re-detection would otherwise be skipped, because the
+            // pointer has not moved since the previous search.
+            self.last_hyperlink_search_position = None;
+            self.refresh_hovered_word(*modifiers, window.mouse_position());
         }
         cx.notify();
     }
@@ -2280,9 +2303,12 @@ impl Terminal {
         cx.notify();
     }
 
+    /// Schedules a hyperlink search under the pointer. Detection always runs,
+    /// so URLs can be underlined without holding a modifier; path-like targets
+    /// are only searched for while the secondary modifier is held, which keeps
+    /// the comparatively expensive path regexes off plain hover.
     fn schedule_find_hyperlink(&mut self, modifiers: Modifiers, position: GpuiPoint<Pixels>) {
         if self.selection_phase == SelectionPhase::Selecting
-            || !modifiers.secondary()
             || !self.last_content.terminal_bounds.bounds.contains(&position)
         {
             self.last_content.last_hovered_word = None;
@@ -2307,6 +2333,7 @@ impl Terminal {
             self.events.push_back(InternalEvent::FindHyperlink(
                 position - self.last_content.terminal_bounds.bounds.origin,
                 false,
+                modifiers.secondary(),
             ));
         }
     }
@@ -2396,7 +2423,7 @@ impl Terminal {
             && (TerminalSettings::get_global(cx).open_links_in_mouse_mode
                 || !self.mouse_mode(e.modifiers.shift))
         {
-            self.mouse_down_hyperlink = self.find_hyperlink_at_point(point);
+            self.mouse_down_hyperlink = self.find_hyperlink_at_point(point, true);
 
             if self.mouse_down_hyperlink.is_some() {
                 return;
@@ -2465,7 +2492,7 @@ impl Terminal {
             );
 
             if self
-                .find_hyperlink_at_point(point)
+                .find_hyperlink_at_point(point, true)
                 .is_some_and(|mouse_up_hyperlink| mouse_up_hyperlink == mouse_down_hyperlink)
             {
                 self.events
@@ -2512,8 +2539,10 @@ impl Terminal {
                 {
                     cx.open_url(link.uri());
                 } else if e.modifiers.secondary() {
+                    // Reached only while the modifier is held, so path-like
+                    // targets are in scope here.
                     self.events
-                        .push_back(InternalEvent::FindHyperlink(position, true));
+                        .push_back(InternalEvent::FindHyperlink(position, true, true));
                 }
             }
         }
@@ -2557,8 +2586,8 @@ impl Terminal {
         }
     }
 
-    fn refresh_hovered_word(&mut self, window: &Window) {
-        self.schedule_find_hyperlink(window.modifiers(), window.mouse_position());
+    fn refresh_hovered_word(&mut self, modifiers: Modifiers, position: GpuiPoint<Pixels>) {
+        self.schedule_find_hyperlink(modifiers, position);
     }
 
     fn determine_scroll_lines(
@@ -4362,6 +4391,49 @@ mod tests {
             assert!(
                 terminal.take_pty_write_log().is_empty(),
                 "a consumed link click must not be reported to the PTY"
+            );
+        });
+    }
+
+    /// Plain hovering must surface URLs so the view can underline them without
+    /// the user holding a modifier, which is how the mouse spends most of its
+    /// time. Path-like targets stay modifier-gated because resolving them
+    /// consults the project and the filesystem.
+    #[gpui::test]
+    async fn test_plain_hover_finds_urls_without_searching_paths(cx: &mut TestAppContext) {
+        let terminal =
+            init_ctrl_click_hyperlink_test(cx, b"Local: http://127.0.0.1:3100/\r\nsrc/main.rs\r\n");
+
+        let url_position = point(px(100.0), px(10.0));
+        let path_position = point(px(30.0), px(30.0));
+
+        let hover = |terminal: &mut Terminal, position, modifiers, cx: &mut Context<Terminal>| {
+            terminal.mouse_move(
+                &MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers,
+                },
+                cx,
+            );
+            terminal.events.iter().find_map(|event| match event {
+                InternalEvent::FindHyperlink(_, _, search_paths) => Some(*search_paths),
+                _ => None,
+            })
+        };
+
+        terminal.update(cx, |terminal, cx| {
+            assert_eq!(
+                hover(terminal, url_position, Modifiers::none(), cx),
+                Some(false),
+                "plain hovering must not trigger the expensive path search"
+            );
+            terminal.events.clear();
+
+            assert_eq!(
+                hover(terminal, path_position, Modifiers::secondary_key(), cx),
+                Some(true),
+                "holding the modifier must enable the path search"
             );
         });
     }

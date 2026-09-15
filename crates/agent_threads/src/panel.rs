@@ -3333,6 +3333,7 @@ impl Render for AgentThreadsPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ResumeOption;
     use crate::store::ThreadAttention;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
     use pretty_assertions::assert_eq;
@@ -3415,10 +3416,7 @@ mod tests {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.agent_threads = Some(AgentThreadSettingsContent {
-                    codex: Some(echo_command("codex", root_path)),
-                    claude: Some(echo_command("claude", root_path)),
-                    pi: Some(echo_command("pi", root_path)),
-                    opencode: Some(echo_command("opencode", root_path)),
+                    droid: Some(echo_command("droid", root_path)),
                     max_visible_threads_per_agent: Some(max_visible_threads_per_agent),
                     show_plan_usage: None,
                     ..Default::default()
@@ -3486,21 +3484,56 @@ mod tests {
         cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx))
     }
 
-    fn codex_kind() -> AgentKindDefinition {
+    fn droid_kind() -> AgentKindDefinition {
         agent_kind_registry()
             .into_iter()
-            .find(|kind| kind.id == "codex")
-            .expect("codex should be registered")
+            .find(|kind| kind.id == "droid")
+            .expect("droid should be registered")
     }
 
-    fn launch_codex_thread(window_handle: &WindowHandle<MultiWorkspace>, cx: &mut TestAppContext) {
+    /// Droid ships with no resume options, so the launch-option plumbing
+    /// (persistence, label-vs-id resolution, visual state) is exercised
+    /// against a synthetic kind that carries one. The id stays `"droid"` so
+    /// `command_for_kind` still resolves the settings-configured default.
+    fn droid_kind_with_resume_option() -> AgentKindDefinition {
+        let mut kind = droid_kind();
+        kind.resume_options = vec![ResumeOption {
+            id: "bypass-approvals-and-sandbox",
+            label: SharedString::new_static("Bypass approvals & sandbox"),
+            args: vec!["--dangerously-bypass-approvals-and-sandbox".to_string()],
+        }];
+        kind
+    }
+
+    fn launch_droid_thread(window_handle: &WindowHandle<MultiWorkspace>, cx: &mut TestAppContext) {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    crate::launch_new_thread_with_default(workspace, &codex_kind(), window, cx);
+                    crate::launch_new_thread_with_default(workspace, &droid_kind(), window, cx);
                 });
             })
-            .expect("failed to launch codex thread");
+            .expect("failed to launch droid thread");
+    }
+
+    /// Launches with the synthetic resume-option kind, so the launch-option
+    /// plumbing has something to resolve against (the real Droid kind has no
+    /// resume options).
+    fn launch_droid_thread_with_resume_option(
+        window_handle: &WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+    ) {
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    crate::launch_new_thread_with_default(
+                        workspace,
+                        &droid_kind_with_resume_option(),
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .expect("failed to launch droid thread");
     }
 
     fn set_default_launch_option(
@@ -3523,35 +3556,6 @@ mod tests {
                 command.default_launch_option = option;
             });
         });
-    }
-
-    fn pi_kind() -> AgentKindDefinition {
-        agent_kind_registry()
-            .into_iter()
-            .find(|kind| kind.id == "pi")
-            .expect("pi should be registered")
-    }
-
-    fn launch_pi_thread(window_handle: &WindowHandle<MultiWorkspace>, cx: &mut TestAppContext) {
-        window_handle
-            .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.workspace().update(cx, |workspace, cx| {
-                    crate::launch_new_thread_with_default(workspace, &pi_kind(), window, cx);
-                });
-            })
-            .expect("failed to launch pi thread");
-    }
-
-    fn live_pi_threads(cx: &mut TestAppContext, project_root: &str) -> Vec<AgentThreadMetadata> {
-        cx.update(|cx| {
-            AgentThreadStore::global(cx)
-                .read(cx)
-                .live_threads_for_project(
-                    "pi",
-                    &[PathBuf::from(project_root)],
-                    &TieResolution::not_ready(),
-                )
-        })
     }
 
     // See `wait_for_live_count` for why this polls with real timer ticks
@@ -3626,12 +3630,12 @@ mod tests {
         });
     }
 
-    fn live_codex_threads(cx: &mut TestAppContext, project_root: &str) -> Vec<AgentThreadMetadata> {
+    fn live_droid_threads(cx: &mut TestAppContext, project_root: &str) -> Vec<AgentThreadMetadata> {
         cx.update(|cx| {
             AgentThreadStore::global(cx)
                 .read(cx)
                 .live_threads_for_project(
-                    "codex",
+                    "droid",
                     &[PathBuf::from(project_root)],
                     &TieResolution::not_ready(),
                 )
@@ -3646,7 +3650,7 @@ mod tests {
     async fn wait_for_live_count(cx: &mut TestAppContext, project_root: &str, expected: usize) {
         for _ in 0..50 {
             cx.run_until_parked();
-            if live_codex_threads(cx, project_root).len() >= expected {
+            if live_droid_threads(cx, project_root).len() >= expected {
                 return;
             }
             cx.executor().timer(Duration::from_millis(50)).await;
@@ -3710,12 +3714,12 @@ mod tests {
         configure_echo_threads(cx, root, 5);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_live_count(cx, root, 1).await;
 
-        let metadata = live_codex_threads(cx, root);
+        let metadata = live_droid_threads(cx, root);
         assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata[0].kind_id, "codex");
+        assert_eq!(metadata[0].kind_id, "droid");
         assert!(metadata[0].resumed_session_id.is_none());
         assert_eq!(metadata[0].tied_worktree_root, PathBuf::from(root));
 
@@ -3723,7 +3727,7 @@ mod tests {
         assert_eq!(terminal_views.len(), 1);
         assert!(terminal_views[0].read_with(cx, |view, _| view.is_agent_thread()));
 
-        set_agent_hidden(cx, "codex", true);
+        set_agent_hidden(cx, "droid", true);
         assert!(terminal_views[0].read_with(cx, |view, _| view.is_agent_thread()));
     }
 
@@ -3735,10 +3739,10 @@ mod tests {
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
         configure_echo_threads(cx, root, 5);
-        set_initialization_command(cx, "codex", "printf initialization-ran");
+        set_initialization_command(cx, "droid", "printf initialization-ran");
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
         let spawned = terminal_views(&window_handle, cx)[0].read_with(cx, |view, cx| {
@@ -3753,8 +3757,20 @@ mod tests {
             .args
             .last()
             .expect("shell should receive a combined command");
-        assert!(combined_command.starts_with("printf initialization-ran && "));
-        assert!(combined_command.ends_with("echo codex"));
+        // The wrapper shape differs per shell (`cmd1 && cmd2` for POSIX,
+        // `& { cmd1 }; if ($?) { cmd2 }` for PowerShell), so assert on the
+        // ordering that actually matters: the initialization command runs
+        // before the agent command.
+        let initialization_index = combined_command
+            .find("printf initialization-ran")
+            .unwrap_or_else(|| panic!("initialization command missing from {combined_command:?}"));
+        let agent_index = combined_command
+            .find("echo droid")
+            .unwrap_or_else(|| panic!("agent command missing from {combined_command:?}"));
+        assert!(
+            initialization_index < agent_index,
+            "the initialization command must run before the agent command, got {combined_command:?}"
+        );
     }
 
     #[gpui::test]
@@ -3767,10 +3783,10 @@ mod tests {
         configure_echo_threads(cx, root, 5);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_live_count(cx, root, 1).await;
 
-        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal_item_id = live_droid_threads(cx, root)[0].terminal_item_id;
         assert_eq!(terminal_views(&window_handle, cx).len(), 1);
 
         // Switch focus away, then verify the panel's focus action brings the
@@ -3824,9 +3840,9 @@ mod tests {
             .expect("failed to create panel");
         cx.run_until_parked();
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_live_count(cx, root, 1).await;
-        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal_item_id = live_droid_threads(cx, root)[0].terminal_item_id;
 
         window_handle
             .update(cx, |_, window, cx| {
@@ -3899,28 +3915,16 @@ mod tests {
             })
         }
 
-        assert_eq!(
-            visible_ids(&panel, cx),
-            vec!["droid", "codex", "claude", "pi", "opencode"]
+        assert_eq!(visible_ids(&panel, cx), vec!["droid"]);
+
+        set_agent_hidden(cx, "droid", true);
+        assert!(
+            visible_ids(&panel, cx).is_empty(),
+            "hiding the only registered agent should leave no visible sections"
         );
 
-        set_agent_hidden(cx, "codex", true);
-        assert_eq!(
-            visible_ids(&panel, cx),
-            vec!["droid", "claude", "pi", "opencode"]
-        );
-
-        set_agent_hidden(cx, "codex", false);
-        assert_eq!(
-            visible_ids(&panel, cx),
-            vec!["droid", "codex", "claude", "pi", "opencode"]
-        );
-
-        set_agent_hidden(cx, "opencode", true);
-        assert_eq!(
-            visible_ids(&panel, cx),
-            vec!["droid", "codex", "claude", "pi"]
-        );
+        set_agent_hidden(cx, "droid", false);
+        assert_eq!(visible_ids(&panel, cx), vec!["droid"]);
     }
 
     #[gpui::test]
@@ -3938,7 +3942,7 @@ mod tests {
         configure_echo_threads(cx, root, 5);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_live_count(cx, root, 1).await;
 
         let panel = window_handle
@@ -3968,7 +3972,7 @@ mod tests {
                     TieResolution::new(project.read(cx), HashSet::default(), true, cx);
                 let _ = window;
                 panel.read(cx).store.read(cx).live_threads_for_project(
-                    "codex",
+                    "droid",
                     &project_roots,
                     &tie_resolution,
                 )
@@ -3990,7 +3994,7 @@ mod tests {
         configure_echo_threads(cx, root_a, 5);
         let window_handle = init_workspace(cx, root_a).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_live_count(cx, root_a, 1).await;
         let terminal_item_id = terminal_views(&window_handle, cx)[0].entity_id();
 
@@ -4022,7 +4026,7 @@ mod tests {
              workspace B, since workspace A was active when the retie happened"
         );
 
-        let metadata = live_codex_threads(cx, root_b.to_str().unwrap());
+        let metadata = live_droid_threads(cx, root_b.to_str().unwrap());
         assert_eq!(
             metadata.len(),
             1,
@@ -4032,7 +4036,7 @@ mod tests {
         assert_eq!(metadata[0].tied_worktree_root, root_b);
 
         assert!(
-            live_codex_threads(cx, root_a).is_empty(),
+            live_droid_threads(cx, root_a).is_empty(),
             "the retied thread should no longer appear under its original worktree root"
         );
 
@@ -4087,7 +4091,7 @@ mod tests {
                     .workspace()
                     .clone()
                     .update(cx, |workspace, cx| {
-                        crate::launch_new_thread_with_default(workspace, &codex_kind(), window, cx);
+                        crate::launch_new_thread_with_default(workspace, &droid_kind(), window, cx);
                     });
             })
             .expect("failed to launch codex thread in workspace B");
@@ -4174,7 +4178,7 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    store::resume_thread(workspace, &codex_kind(), &thread, &[], window, cx);
+                    store::resume_thread(workspace, &droid_kind(), &thread, &[], window, cx);
                 });
             })
             .expect("failed to resume thread");
@@ -4182,7 +4186,7 @@ mod tests {
         let terminal_item_id = terminal_views(&window_handle, cx)[0].entity_id();
 
         assert!(
-            cx.update(|cx| store::read_tie_override(cx, "codex", "session-persist"))
+            cx.update(|cx| store::read_tie_override(cx, "droid", "session-persist"))
                 .is_none(),
             "no override should exist before any retie"
         );
@@ -4205,7 +4209,7 @@ mod tests {
         );
 
         let override_ = cx
-            .update(|cx| store::read_tie_override(cx, "codex", "session-persist"))
+            .update(|cx| store::read_tie_override(cx, "droid", "session-persist"))
             .expect("the override should now be persisted");
         assert_eq!(override_.root, root_b);
 
@@ -4215,7 +4219,7 @@ mod tests {
             assert!(
                 !historical_thread_belongs_to_panel(
                     cx,
-                    "codex",
+                    "droid",
                     &thread,
                     &[PathBuf::from(root_a)],
                     PathStyle::Posix,
@@ -4230,7 +4234,7 @@ mod tests {
             assert!(
                 historical_thread_belongs_to_panel(
                     cx,
-                    "codex",
+                    "droid",
                     &thread_at_b,
                     std::slice::from_ref(&root_b),
                     PathStyle::Posix,
@@ -4260,7 +4264,7 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    store::resume_thread(workspace, &codex_kind(), &thread, &[], window, cx);
+                    store::resume_thread(workspace, &droid_kind(), &thread, &[], window, cx);
                 });
             })
             .expect("failed to resume thread");
@@ -4286,7 +4290,7 @@ mod tests {
             assert!(
                 historical_thread_belongs_to_panel(
                     cx,
-                    "codex",
+                    "droid",
                     &thread,
                     &[PathBuf::from(root_a)],
                     PathStyle::Posix,
@@ -4317,7 +4321,7 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    store::resume_thread(workspace, &codex_kind(), &thread, &[], window, cx);
+                    store::resume_thread(workspace, &droid_kind(), &thread, &[], window, cx);
                 });
             })
             .expect("failed to resume thread");
@@ -4342,7 +4346,7 @@ mod tests {
             assert!(
                 historical_thread_belongs_to_panel(
                     cx,
-                    "codex",
+                    "droid",
                     &thread,
                     std::slice::from_ref(&remote_only_root),
                     PathStyle::Posix,
@@ -4370,7 +4374,7 @@ mod tests {
             assert!(
                 historical_thread_belongs_to_panel(
                     cx,
-                    "codex",
+                    "droid",
                     &thread,
                     &[PathBuf::from("/work/project")],
                     PathStyle::Posix,
@@ -4388,7 +4392,6 @@ mod tests {
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
         configure_echo_threads(cx, root, 5);
-        set_agent_hidden(cx, "pi", true);
         let window_handle = init_workspace(cx, root).await;
 
         let panel = window_handle
@@ -4400,15 +4403,29 @@ mod tests {
             .expect("failed to create panel");
         cx.run_until_parked();
 
+        // A source that isn't itself registered, so the source-exclusion
+        // filter doesn't mask what's under test here (hidden filtering).
         let target_ids = panel.read_with(cx, |panel, cx| {
             panel
-                .handoff_targets("claude", cx)
+                .handoff_targets("some-other-agent", cx)
                 .iter()
                 .map(|kind| kind.id)
                 .collect::<Vec<_>>()
         });
+        assert_eq!(target_ids, vec!["droid"]);
 
-        assert_eq!(target_ids, vec!["droid", "codex", "opencode"]);
+        set_agent_hidden(cx, "droid", true);
+        let target_ids = panel.read_with(cx, |panel, cx| {
+            panel
+                .handoff_targets("some-other-agent", cx)
+                .iter()
+                .map(|kind| kind.id)
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            target_ids.is_empty(),
+            "a hidden agent must not be offered as a handoff target"
+        );
     }
 
     #[gpui::test]
@@ -4419,10 +4436,10 @@ mod tests {
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
         configure_echo_threads(cx, root, 5);
-        set_default_launch_option(cx, "codex", Some("Bypass approvals & sandbox"));
+        set_default_launch_option(cx, "droid", Some("Bypass approvals & sandbox"));
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread_with_resume_option(&window_handle, cx);
         wait_for_live_count(cx, root, 1).await;
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
@@ -4447,9 +4464,9 @@ mod tests {
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
         configure_echo_threads(cx, root, 5);
-        set_default_launch_option(cx, "codex", Some("Bypass approvals & sandbox"));
+        set_default_launch_option(cx, "droid", Some("Bypass approvals & sandbox"));
 
-        let kind = codex_kind();
+        let kind = droid_kind_with_resume_option();
         let session_id = SharedString::from("session-remember");
 
         // No per-thread choice recorded yet -> falls back to the agent default.
@@ -4472,9 +4489,9 @@ mod tests {
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
         configure_echo_threads(cx, root, 5);
-        set_default_launch_option(cx, "codex", Some("Bypass approvals & sandbox"));
+        set_default_launch_option(cx, "droid", Some("Bypass approvals & sandbox"));
 
-        let kind = codex_kind();
+        let kind = droid_kind_with_resume_option();
 
         // No new-thread dropdown choice recorded yet -> falls back to the
         // agent default.
@@ -4503,7 +4520,7 @@ mod tests {
         let root = SPAWNING_TEST_ROOT.as_str();
         configure_echo_threads(cx, root, 5);
 
-        let kind = codex_kind();
+        let kind = droid_kind_with_resume_option();
         let option = kind.resume_options[0].clone();
         let session_id = SharedString::from("session-relabel");
 
@@ -4537,9 +4554,9 @@ mod tests {
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
         configure_echo_threads(cx, root, 5);
-        set_default_launch_option(cx, "codex", Some("Bypass approvals & sandbox"));
+        set_default_launch_option(cx, "droid", Some("Bypass approvals & sandbox"));
 
-        let kind = codex_kind();
+        let kind = droid_kind_with_resume_option();
         let session_id = SharedString::from("session-label");
 
         let (new_visual, resume_visual) = cx.update(|cx| {
@@ -4683,7 +4700,7 @@ mod tests {
         // test here -- `render_row`'s output is unchanged.
         let live_metadata = AgentThreadMetadata {
             terminal_item_id: gpui::EntityId::from(1),
-            kind_id: "codex",
+            kind_id: "droid",
             title: SharedString::from("live"),
             project_root: PathBuf::from("/root"),
             tied_worktree_root: PathBuf::from("/root"),
@@ -4743,19 +4760,19 @@ mod tests {
             .expect("failed to create panel");
 
         let (collapsed_before, visible_override_before) = panel.update(cx, |panel, _| {
-            let section = panel.sections.get("codex").unwrap();
+            let section = panel.sections.get("droid").unwrap();
             (section.collapsed, section.visible_override)
         });
         assert!(!collapsed_before);
         assert_eq!(visible_override_before, None);
 
         panel.update(cx, |panel, _| {
-            panel.toggle_section_collapsed("codex");
-            panel.expand_section_visible_count("codex", 5, 20);
+            panel.toggle_section_collapsed("droid");
+            panel.expand_section_visible_count("droid", 5, 20);
         });
 
         let (collapsed_after, visible_override_after) = panel.update(cx, |panel, _| {
-            let section = panel.sections.get("codex").unwrap();
+            let section = panel.sections.get("droid").unwrap();
             (section.collapsed, section.visible_override)
         });
         assert!(collapsed_after);
@@ -4765,46 +4782,46 @@ mod tests {
         assert_eq!(visible_override_after, Some(5));
 
         panel.update(cx, |panel, _| {
-            panel.expand_section_visible_count("codex", 5, 20);
+            panel.expand_section_visible_count("droid", 5, 20);
         });
         let visible_override_after_second_expand = panel.update(cx, |panel, _| {
-            panel.sections.get("codex").unwrap().visible_override
+            panel.sections.get("droid").unwrap().visible_override
         });
         assert_eq!(visible_override_after_second_expand, Some(10));
 
         panel.update(cx, |panel, _| {
-            panel.collapse_section_visible_count("codex");
+            panel.collapse_section_visible_count("droid");
         });
         let visible_override_after_collapse = panel.update(cx, |panel, _| {
-            panel.sections.get("codex").unwrap().visible_override
+            panel.sections.get("droid").unwrap().visible_override
         });
         assert_eq!(visible_override_after_collapse, Some(5));
 
         panel.update(cx, |panel, _| {
-            panel.collapse_section_visible_count("codex");
+            panel.collapse_section_visible_count("droid");
         });
         let visible_override_after_second_collapse = panel.update(cx, |panel, _| {
-            panel.sections.get("codex").unwrap().visible_override
+            panel.sections.get("droid").unwrap().visible_override
         });
         // 5 halves to 2, which is still above the floor (1).
         assert_eq!(visible_override_after_second_collapse, Some(2));
 
         panel.update(cx, |panel, _| {
-            panel.expand_section_visible_count("codex", 5, 20);
-            panel.expand_section_visible_count("codex", 5, 20);
+            panel.expand_section_visible_count("droid", 5, 20);
+            panel.expand_section_visible_count("droid", 5, 20);
         });
         let visible_override_before_reset = panel.update(cx, |panel, _| {
-            panel.sections.get("codex").unwrap().visible_override
+            panel.sections.get("droid").unwrap().visible_override
         });
         // From 2: first expand here jumps to default_cap (5) again since
         // 2 < 5, then the second expand doubles 5 -> 10.
         assert_eq!(visible_override_before_reset, Some(10));
 
         panel.update(cx, |panel, _| {
-            panel.reset_section_visible_count("codex");
+            panel.reset_section_visible_count("droid");
         });
         let visible_override_after_reset = panel.update(cx, |panel, _| {
-            panel.sections.get("codex").unwrap().visible_override
+            panel.sections.get("droid").unwrap().visible_override
         });
         assert_eq!(visible_override_after_reset, None);
     }
@@ -4874,7 +4891,7 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    store::resume_thread(workspace, &codex_kind(), &thread, &[], window, cx);
+                    store::resume_thread(workspace, &droid_kind(), &thread, &[], window, cx);
                 });
             })
             .expect("failed to resume thread");
@@ -4920,7 +4937,7 @@ mod tests {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
                     store::resume_thread(
                         workspace,
-                        &codex_kind(),
+                        &droid_kind(),
                         &thread,
                         &["--dangerously-bypass-approvals-and-sandbox".to_string()],
                         window,
@@ -4956,7 +4973,7 @@ mod tests {
         configure_echo_threads(cx, root, 5);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
         let active_window_handle = init_workspace(cx, root).await;
@@ -4996,7 +5013,7 @@ mod tests {
         configure_echo_threads(cx, project_root, 5);
         let window_handle = init_workspace(cx, project_root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
         let terminal_views = terminal_views(&window_handle, cx);
@@ -5009,7 +5026,7 @@ mod tests {
         assert_eq!(notifications.len(), 1);
         assert_eq!(
             notifications[0].1.as_deref(),
-            Some("Codex is waiting for you · Project: notification-project")
+            Some("Droid is waiting for you · Project: notification-project")
         );
     }
 
@@ -5032,7 +5049,7 @@ mod tests {
         configure_echo_threads(cx, project_root, 5);
         let window_handle = init_workspace(cx, project_root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
         let terminal_views = terminal_views(&window_handle, cx);
@@ -5045,7 +5062,7 @@ mod tests {
         assert_eq!(notifications.len(), 1);
         assert_eq!(
             notifications[0].1.as_deref(),
-            Some("Codex 正在等待您 · 项目：notification-project")
+            Some("Droid 正在等待您 · 项目：notification-project")
         );
     }
 
@@ -5057,10 +5074,10 @@ mod tests {
         configure_echo_threads(cx, root, 5);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
-        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal_item_id = live_droid_threads(cx, root)[0].terminal_item_id;
         let terminal =
             terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
         terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
@@ -5124,16 +5141,16 @@ mod tests {
         configure_echo_threads(cx, root, 5);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
-        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal_item_id = live_droid_threads(cx, root)[0].terminal_item_id;
         let terminal =
             terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
-        // Codex's `osc_title_idle` rule: a non-empty OSC title that isn't
-        // "Action Required" classifies as Idle.
+        // Droid's `droid_idle` rule: the prompt's "? for help" footer with no
+        // blocking gate on screen classifies as Idle.
         terminal.update(cx, |terminal, cx| {
-            terminal.breadcrumb_text = "codex: my-project".to_string();
+            terminal.write_output(b"? for help", cx);
             cx.emit(terminal::Event::Bell);
         });
         cx.run_until_parked();
@@ -5183,13 +5200,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn bell_classifies_idle_from_the_terminals_osc_title_through_the_full_pipeline(
+    async fn bell_classifies_idle_from_the_terminals_screen_through_the_full_pipeline(
         cx: &mut TestAppContext,
     ) {
         // Unlike `bell_sets_needs_attention_until_the_thread_is_focused`
         // (plain echo output, unclassifiable, falls back to Blocked), this
         // drives store.rs's real bell handler -- snapshotting the live
-        // terminal's content and OSC title and running them through
+        // terminal's content and running it through
         // `attention_detection::classify` -- rather than asserting against
         // the classifier module directly, to prove the wiring, not just the
         // rules (attention_detection's own tests already cover the rules).
@@ -5199,19 +5216,17 @@ mod tests {
         configure_echo_threads(cx, root, 5);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
-        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal_item_id = live_droid_threads(cx, root)[0].terminal_item_id;
         let terminal =
             terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
-        // Codex's `osc_title_idle` rule: a non-empty OSC title that isn't
-        // "Action Required" classifies as Idle. Setting the field directly
-        // is equivalent to the CLI having sent that OSC title sequence --
-        // `TerminalBackendEvent::Title` handling just assigns this same
-        // field (terminal.rs's `process_event`).
+        // Droid's `droid_idle` rule: the prompt's "? for help" footer with no
+        // blocking gate on screen classifies as Idle. Droid emits no OSC
+        // title, so the screen tail is the only signal its manifest uses.
         terminal.update(cx, |terminal, cx| {
-            terminal.breadcrumb_text = "codex: my-project".to_string();
+            terminal.write_output(b"? for help", cx);
             cx.emit(terminal::Event::Bell);
         });
         cx.run_until_parked();
@@ -5221,31 +5236,31 @@ mod tests {
                 .read(cx)
                 .thread_attention(terminal_item_id)),
             Some(ThreadAttention::Idle),
-            "a non-blocked OSC title should classify the bell as Idle, not the generic Blocked fallback"
+            "Droid's idle prompt footer should classify the bell as Idle, not the generic Blocked fallback"
         );
     }
 
     #[gpui::test]
-    async fn pi_thread_reaches_blocked_via_wakeup_without_ever_ringing_a_bell(
+    async fn droid_thread_reaches_blocked_via_wakeup_without_ever_ringing_a_bell(
         cx: &mut TestAppContext,
     ) {
-        // Pi never rings the terminal bell (see attention_manifests/pi.toml),
-        // so terminal output and its Wakeup event are the only path that can
-        // flag a Pi thread.
+        // Droid writes neither a bare BEL nor an OSC window title (see
+        // attention_manifests/droid.toml), so terminal output and its Wakeup
+        // event are the only path that can flag a Droid thread.
         cx.executor().allow_parking();
         init_test(cx);
         let root = SPAWNING_TEST_ROOT.as_str();
         configure_echo_threads(cx, root, 5);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_pi_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
-        let terminal_item_id = live_pi_threads(cx, root)[0].terminal_item_id;
+        let terminal_item_id = live_droid_threads(cx, root)[0].terminal_item_id;
         let terminal =
             terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
         terminal.update(cx, |terminal, cx| {
-            terminal.write_output(b"Project trust\nSaved decision: none", cx);
+            terminal.write_output(b"Trust this folder\nEnter to confirm", cx);
         });
         wait_for_thread_attention(cx, terminal_item_id, Some(ThreadAttention::Blocked)).await;
 
@@ -5254,7 +5269,7 @@ mod tests {
                 .read(cx)
                 .thread_attention(terminal_item_id)),
             Some(ThreadAttention::Blocked),
-            "a Pi Project trust prompt should be classified Blocked from terminal Wakeup without a bell"
+            "a Droid folder-trust prompt should be classified Blocked from terminal Wakeup without a bell"
         );
     }
 
@@ -5272,14 +5287,14 @@ mod tests {
         configure_echo_threads(cx, root, 5);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_pi_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
-        let terminal_item_id = live_pi_threads(cx, root)[0].terminal_item_id;
+        let terminal_item_id = live_droid_threads(cx, root)[0].terminal_item_id;
         let terminal =
             terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
         terminal.update(cx, |terminal, cx| {
-            terminal.write_output(b"some ordinary output matching no Pi rule", cx);
+            terminal.write_output(b"some ordinary output matching no Droid rule", cx);
         });
         // There's nothing to "wait to become" here -- give the debounced
         // Wakeup path the same window it gets in the positive test, then
@@ -5306,15 +5321,15 @@ mod tests {
         configure_echo_threads(cx, root, 5);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
-        let terminal_item_id = live_codex_threads(cx, root)[0].terminal_item_id;
+        let terminal_item_id = live_droid_threads(cx, root)[0].terminal_item_id;
         let terminal =
             terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
 
         terminal.update(cx, |terminal, cx| {
-            terminal.breadcrumb_text = "Action Required".to_string();
+            terminal.write_output(b"Command to approve\nYes, allow", cx);
             cx.emit(terminal::Event::Bell);
         });
         cx.run_until_parked();
@@ -5323,17 +5338,19 @@ mod tests {
                 .read(cx)
                 .thread_attention(terminal_item_id)),
             Some(ThreadAttention::Blocked),
-            "codex's osc_title_blocked rule should flag the thread first"
+            "Droid's command-approval prompt should flag the thread first"
         );
 
         let notifications_before = cx.shown_notifications().len();
 
-        // A busy-spinner OSC title classifies as Working (codex's
-        // osc_title_working rule). Reached via a plain Wakeup, not a Bell,
-        // matching how this would happen for real -- the CLI updates its
-        // title as it resumes, Flint doesn't get another bell for that.
+        // "Press esc to stop" classifies as Working (Droid's `droid_working`
+        // rule). Reached via a plain Wakeup, not a Bell, matching how this
+        // would happen for real -- the CLI repaints as it resumes, Flint
+        // doesn't get another bell for that. The screen is cleared first so
+        // the approval prompt is genuinely gone, as a repainting TUI would
+        // leave it (the classifier reads the visible screen, not scrollback).
         terminal.update(cx, |terminal, cx| {
-            terminal.breadcrumb_text = "⠙ codex".to_string();
+            terminal.write_output(b"\x1b[2J\x1b[3J\x1b[HPress esc to stop", cx);
             cx.emit(terminal::Event::Wakeup);
         });
         wait_for_thread_attention(cx, terminal_item_id, None).await;
@@ -5378,10 +5395,10 @@ mod tests {
         configure_echo_threads(cx, root_a, 5);
         let window_handle = init_workspace(cx, root_a).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
-        let terminal_item_id = live_codex_threads(cx, root_a)[0].terminal_item_id;
+        let terminal_item_id = live_droid_threads(cx, root_a)[0].terminal_item_id;
         let terminal =
             terminal_views(&window_handle, cx)[0].read_with(cx, |view, _| view.terminal().clone());
         terminal.update(cx, |_, cx| cx.emit(terminal::Event::Bell));
@@ -5700,7 +5717,7 @@ mod tests {
         configure_echo_threads(cx, root, 5);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
         window_handle
             .update(cx, |_, window, _| window.activate_window())
@@ -5736,7 +5753,7 @@ mod tests {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
-                    store::resume_thread(workspace, &codex_kind(), &thread, &[], window, cx);
+                    store::resume_thread(workspace, &droid_kind(), &thread, &[], window, cx);
                 });
             })
             .expect("failed to resume thread");
@@ -5771,7 +5788,7 @@ mod tests {
         set_notify_when_finished(cx, false);
         let window_handle = init_workspace(cx, root).await;
 
-        launch_codex_thread(&window_handle, cx);
+        launch_droid_thread(&window_handle, cx);
         wait_for_terminal_view_count(&window_handle, cx, 1).await;
 
         let terminal_views = terminal_views(&window_handle, cx);
